@@ -178,19 +178,19 @@ export function WebsitePreviewModal({
               onClick={() => onApplyEdit && onApplyEdit("Make the hero section more premium")}
               className="px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-amber-300 text-[11px] border border-slate-800"
             >
-              "Make hero more premium"
+              &ldquo;Make hero more premium&rdquo;
             </button>
             <button
               onClick={() => onApplyEdit && onApplyEdit("Change the CTA to Book a Consultation")}
               className="px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-amber-300 text-[11px] border border-slate-800"
             >
-              "Change CTA"
+              &ldquo;Change CTA&rdquo;
             </button>
             <button
               onClick={() => onApplyEdit && onApplyEdit("Make this mobile friendly")}
               className="px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-amber-300 text-[11px] border border-slate-800"
             >
-              "Optimize mobile"
+              &ldquo;Optimize mobile&rdquo;
             </button>
           </div>
 

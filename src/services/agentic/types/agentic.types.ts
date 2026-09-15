@@ -99,6 +99,10 @@ export interface AgentResult {
   nextSuggestedAgent?: string;
   confidence: number;
   errors?: string[];
+  artifacts?: Array<{ type: string; name: string; url?: string; content?: unknown }>;
+  metrics?: Record<string, number>;
+  warnings?: string[];
+  retryCount?: number;
 }
 
 // ============================================================================
@@ -106,9 +110,16 @@ export interface AgentResult {
 // ============================================================================
 
 export type PlanStatus =
+  | "CREATED"
+  | "PLANNING"
   | "PENDING"
   | "IN_PROGRESS"
+  | "WAITING_FOR_INPUT"
   | "AWAITING_APPROVAL"
+  | "EXECUTING"
+  | "VERIFYING"
+  | "RETRYING"
+  | "REPLANNING"
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED";
@@ -116,6 +127,9 @@ export type PlanStatus =
 export type StepStatus =
   | "PENDING"
   | "IN_PROGRESS"
+  | "EXECUTING"
+  | "VERIFYING"
+  | "RETRYING"
   | "COMPLETED"
   | "FAILED"
   | "SKIPPED"
@@ -137,6 +151,8 @@ export interface ExecutionStep {
   output?: Record<string, unknown>;
   summary?: string;
   error?: string;
+  retryCount?: number;
+  maxRetries?: number;
   startedAt?: number;
   completedAt?: number;
 }
@@ -165,6 +181,29 @@ export interface ExecutionPlan {
   updatedAt: number;
   completedAt?: number;
   summary?: string;
+}
+
+export interface ExecutionHistoryRecord {
+  executionId: string;
+  requestId?: string;
+  organizationId: string;
+  userId: string;
+  goal: string;
+  objective: string;
+  status: PlanStatus;
+  stepsCount: number;
+  completedStepsCount: number;
+  agentsInvolved: string[];
+  toolsUsed: string[];
+  retryCount: number;
+  startedAt: number;
+  completedAt?: number;
+  durationMs?: number;
+  summary: string;
+  error?: string;
+  artifacts?: Array<{ type: string; name: string; url?: string; content?: unknown }>;
+  previewUrl?: string;
+  approvalStatus?: "NONE" | "REQUESTED" | "APPROVED" | "REJECTED";
 }
 
 // ============================================================================

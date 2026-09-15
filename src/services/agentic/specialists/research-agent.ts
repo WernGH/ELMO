@@ -47,16 +47,33 @@ export class ResearchAgent {
       `Positioned as the premium authority in their niche`,
     ];
 
+    const isCompetitorQuery = topic.toLowerCase().includes("competitor") || message.task.toLowerCase().includes("competitor");
+
+    const competitorGaps = isCompetitorQuery
+      ? [
+          "Competitors have slow response times (avg > 4 hours to engage new leads)",
+          "Competitor funnels lack real-time interactive qualification and personalized nurture",
+          "Competitor pricing models charge steep retainers without guaranteed speed-to-lead",
+        ]
+      : [
+          "Competitors lack automated AI response speed",
+          "Competitor offerings are fragmented and confusing",
+        ];
+
+    const summaryText = isCompetitorQuery
+      ? `Completed competitor and market gap analysis for "${targetAudience}". Identified 3 critical competitor weaknesses to exploit.`
+      : `Completed audience and market research for "${targetAudience}". Identified core pain points, objections, and desired transformations.`;
+
     return {
       agentId: "research-agent",
       success: true,
-      summary: `Completed audience and market research for "${targetAudience}". Identified core pain points, objections, and desired transformations.`,
+      summary: summaryText,
       data: {
         targetAudience,
         topic,
         painPoints,
         desireOutcomes,
-        competitorGaps: ["Competitors lack automated AI response speed", "Competitor offerings are fragmented and confusing"],
+        competitorGaps,
         existingInsights,
       },
       recommendations: [
@@ -65,8 +82,10 @@ export class ResearchAgent {
       ],
       actionsTaken: [
         {
-          action: "AUDIENCE_ANALYSIS",
-          description: `Extracted pain points and target outcome profile for ${targetAudience}`,
+          action: isCompetitorQuery ? "COMPETITOR_ANALYSIS" : "AUDIENCE_ANALYSIS",
+          description: isCompetitorQuery
+            ? `Extracted competitor weaknesses and differentiation opportunities for ${targetAudience}`
+            : `Extracted pain points and target outcome profile for ${targetAudience}`,
           status: "SUCCESS",
         },
       ],
@@ -74,6 +93,17 @@ export class ResearchAgent {
       needsMoreWork: false,
       nextSuggestedAgent: "marketing-agent",
       confidence: 0.95,
+      artifacts: [
+        {
+          type: "research_brief",
+          name: `${targetAudience} Market Research Brief`,
+          content: { painPoints, desireOutcomes, competitorGaps },
+        },
+      ],
+      metrics: {
+        competitorGapsCount: competitorGaps.length,
+        confidenceScore: 0.95,
+      },
     };
   }
 }

@@ -13,7 +13,7 @@ import {
 import { GeminiService } from "./gemini.service";
 
 export type { LLMProvider, LLMGenerateOptions } from "@/types/chat.types";
-export type LLMProviderType = "gemini" | "openai" | "claude" | "mock";
+export type LLMProviderType = "gemini" | "kimi" | "openai" | "claude" | "mock";
 
 /**
  * Gemini Provider — Authoritative primary text intelligence provider for ELMO.

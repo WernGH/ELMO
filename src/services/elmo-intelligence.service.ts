@@ -361,6 +361,9 @@ export class ELMOIntelligenceService {
        ) ||
        /(build me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
          lowerMessage
+       ) ||
+       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(
+         lowerMessage
        ));
 
     if (isWebsiteOrCoding) {
@@ -373,6 +376,10 @@ export class ELMOIntelligenceService {
           message: trimmedMessage,
           intentAnalysis: saasIntentAnalysis,
           language: langCtx.responseLanguage,
+          companyBrainContext: {
+            organization: chatContext.organization,
+            memories: chatContext.memories,
+          },
         });
 
         if (!orchRes.isDirectAnswer) {
@@ -921,6 +928,9 @@ export class ELMOIntelligenceService {
        ) ||
        /(build me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
          lowerMessage
+       ) ||
+       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(
+         lowerMessage
        ));
 
     if (isWebsiteOrCoding) {
@@ -933,6 +943,10 @@ export class ELMOIntelligenceService {
           message: trimmedMessage,
           intentAnalysis: saasIntentAnalysis,
           language: langCtx.responseLanguage,
+          companyBrainContext: {
+            organization: chatContext.organization,
+            memories: chatContext.memories,
+          },
         });
 
         if (!orchRes.isDirectAnswer) {
