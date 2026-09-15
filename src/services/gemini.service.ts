@@ -28,7 +28,7 @@ export interface StructuredOutputOptions<T> {
 
 export class GeminiService {
   private static instance: GeminiService;
-  private readonly defaultModel = "gemini-1.5-flash";
+  private readonly defaultModel = process.env.GEMINI_MODEL || "gemini-3.6-flash";
   private readonly defaultTemperature = 0.7;
   private readonly defaultMaxTokens = 2048;
 
@@ -42,9 +42,31 @@ export class GeminiService {
   }
 
   /**
+   * Sanitizes strings and errors to ensure the API key is never leaked
+   */
+  public sanitizeError(error: unknown, apiKey?: string | null): string {
+    let msg = error instanceof Error ? error.message : String(error);
+    if (apiKey) {
+      msg = msg.split(apiKey).join("[REDACTED_API_KEY]");
+    }
+    msg = msg.replace(/key=[a-zA-Z0-9_\-\.]+/gi, "key=[REDACTED_API_KEY]");
+    return msg;
+  }
+
+  /**
+   * Checks whether a live Gemini API key is configured
+   */
+  public hasApiKey(): boolean {
+    return Boolean(this.getApiKey());
+  }
+
+  /**
    * Reads the Gemini API key strictly server-side via centralized config
    */
   private getApiKey(): string | null {
+    if (process.env.VITEST === "true" && process.env.TEST_REAL_GEMINI !== "true") {
+      return null;
+    }
     try {
       const serverEnv = getServerEnv();
       const key = serverEnv.geminiApiKey;
@@ -54,6 +76,47 @@ export class GeminiService {
       return key.trim();
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Safe server-side connection health verification
+   */
+  public async testConnection(): Promise<{
+    success: boolean;
+    model: string;
+    latencyMs: number;
+    error?: string;
+  }> {
+    const apiKey = this.getApiKey();
+    const model = process.env.GEMINI_MODEL || this.defaultModel;
+    if (!apiKey) {
+      return {
+        success: false,
+        model,
+        latencyMs: 0,
+        error: "Gemini provider unavailable: GEMINI_API_KEY is not configured.",
+      };
+    }
+
+    const startTime = Date.now();
+    try {
+      const res = await this.generateResponse({
+        prompt: "Respond with 'PONG' only.",
+        config: { maxOutputTokens: 10, temperature: 0.1 },
+      });
+      return {
+        success: true,
+        model: res.model,
+        latencyMs: Date.now() - startTime,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        model,
+        latencyMs: Date.now() - startTime,
+        error: this.sanitizeError(err, apiKey),
+      };
     }
   }
 
@@ -129,16 +192,32 @@ export class GeminiService {
         parts: [{ text: effectiveSystemInstruction }],
       };
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: options.abortSignal,
-      });
+      let response: Response | null = null;
+      let errorText = "";
+      const maxRetries = 2;
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini API error [${response.status}]: ${errorText}`);
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: options.abortSignal,
+        });
+
+        if (response.ok) break;
+
+        errorText = await response.text();
+        if ((response.status === 503 || response.status === 429) && attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+
+        const safeError = this.sanitizeError(errorText, apiKey);
+        throw new Error(`Gemini API error [${response.status}]: ${safeError}`);
+      }
+
+      if (!response || !response.ok) {
+        throw new Error(`Gemini API error: ${this.sanitizeError(errorText, apiKey)}`);
       }
 
       const data = await response.json();
@@ -160,9 +239,9 @@ export class GeminiService {
         latencyMs,
       };
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logError("generateResponse failed", errorMsg);
-      throw new Error(`Gemini service failure: ${errorMsg}`);
+      const safeError = this.sanitizeError(err, apiKey);
+      this.logError("generateResponse failed", safeError);
+      throw new Error(`Gemini provider unavailable: ${safeError}`);
     }
   }
 
@@ -236,16 +315,32 @@ export class GeminiService {
         };
       }
 
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: options.abortSignal,
-      });
+      let response: Response | null = null;
+      let errorText = "";
+      const maxRetries = 2;
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini Stream error [${response.status}]: ${errorText}`);
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: options.abortSignal,
+        });
+
+        if (response.ok) break;
+
+        errorText = await response.text();
+        if ((response.status === 503 || response.status === 429) && attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+
+        const safeError = this.sanitizeError(errorText, apiKey);
+        throw new Error(`Gemini Stream error [${response.status}]: ${safeError}`);
+      }
+
+      if (!response || !response.ok) {
+        throw new Error(`Gemini Stream error: ${this.sanitizeError(errorText, apiKey)}`);
       }
 
       if (!response.body) {
@@ -302,9 +397,9 @@ export class GeminiService {
         yield { type: "done", metadata: { status: "complete" } };
         return;
       }
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logError("generateStream failed", errorMsg);
-      yield { type: "error", error: errorMsg };
+      const safeError = this.sanitizeError(err, apiKey);
+      this.logError("generateStream failed", safeError);
+      yield { type: "error", error: `Gemini provider unavailable: ${safeError}` };
     }
   }
 
