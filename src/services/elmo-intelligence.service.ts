@@ -352,6 +352,7 @@ export class ELMOIntelligenceService {
     const isWebsiteOrCoding =
       !isDirectResponse &&
       (saasIntentAnalysis.intent === "website_creation" ||
+       saasIntentAnalysis.intent === "page_creation" ||
        saasIntentAnalysis.intent === "website_modification" ||
        saasIntentAnalysis.intent === "component_creation" ||
        saasIntentAnalysis.intent === "code_generation" ||
@@ -359,7 +360,7 @@ export class ELMOIntelligenceService {
        /\b(bina|buat|build|create|make)\b.*\b(landing page|sales page|website|laman web|halaman)\b/i.test(
          lowerMessage
        ) ||
-       /(build me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
+       /(build me a landing page|create me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
          lowerMessage
        ) ||
        /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(
@@ -919,6 +920,7 @@ export class ELMOIntelligenceService {
     const isWebsiteOrCoding =
       !isDirectResponse &&
       (saasIntentAnalysis.intent === "website_creation" ||
+       saasIntentAnalysis.intent === "page_creation" ||
        saasIntentAnalysis.intent === "website_modification" ||
        saasIntentAnalysis.intent === "component_creation" ||
        saasIntentAnalysis.intent === "code_generation" ||
@@ -926,7 +928,7 @@ export class ELMOIntelligenceService {
        /\b(bina|buat|build|create|make)\b.*\b(landing page|sales page|website|laman web|halaman)\b/i.test(
          lowerMessage
        ) ||
-       /(build me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
+       /(build me a landing page|create me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
          lowerMessage
        ) ||
        /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(

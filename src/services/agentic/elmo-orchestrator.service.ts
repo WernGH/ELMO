@@ -148,7 +148,10 @@ export class ElmoOrchestratorService {
 
     // Check for full landing page or website creation
     const isFullWebCreation =
+      /\b(create|build|make|generate|design|launch|bina|buat)\b.*\b(landing page|website|webpage|sales page|funnel page)\b/i.test(lower) ||
+      (lower.includes("landing page") && (lower.includes("create") || lower.includes("build") || lower.includes("make") || lower.includes("bina") || lower.includes("buat"))) ||
       lower.includes("build me a landing page") ||
+      lower.includes("create me a landing page") ||
       lower.includes("create a landing page") ||
       lower.includes("build a website") ||
       lower.includes("create a website") ||

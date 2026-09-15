@@ -339,6 +339,7 @@ export default function ELMOChatPage() {
       const decoder = new TextDecoder();
       let currentBuffer = "";
       let fullAssistantText = "";
+      let receivedPreviewPayload: PreviewPayload | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -400,7 +401,9 @@ export default function ELMOChatPage() {
             try {
               const meta = JSON.parse(eventData);
               if (meta.previewPayload) {
+                receivedPreviewPayload = meta.previewPayload;
                 setPreviewModalPayload(meta.previewPayload);
+                setIsPreviewModalOpen(true);
               }
               if (meta.executionPlan?.steps) {
                 setActivePlanSteps(meta.executionPlan.steps);
@@ -428,7 +431,7 @@ export default function ELMOChatPage() {
           metadata: {
             status: "complete",
             model: "gemini-2.5-flash",
-            preview_payload: previewModalPayload,
+            preview_payload: receivedPreviewPayload || previewModalPayload,
           },
           created_at: new Date().toISOString(),
         };

@@ -381,4 +381,45 @@ describe("ELMO Phase 3: AI-Native Agentic Engine Acceptance Suite", () => {
     const plan = res.executionPlan as any;
     expect(plan?.status).toBe("COMPLETED");
   });
+
+  // ==========================================================================
+  // 10. Natural Language Prompt Handling: "create me a landing page"
+  // ==========================================================================
+  it("Natural Language Directive: 'create me a landing page' triggers full landing page workflow with live preview", async () => {
+    const res = await intelligenceService.processMessage({
+      userId: userA,
+      organizationId: orgA,
+      message: "create me a landing page",
+      inputMode: "text",
+    });
+
+    expect(res).toBeDefined();
+    expect(res.provider).toBe("elmo-orchestrator");
+    expect(res.visualState).toBe("SUCCESS");
+    expect(res.previewPayload).toBeDefined();
+    const preview = res.previewPayload as any;
+    expect(preview.pageTitle).toBeDefined();
+    expect(preview.renderedHtml).toBeDefined();
+    expect(preview.sectionsCount).toBeGreaterThan(0);
+    expect(res.executionPlan).toBeDefined();
+    const plan = res.executionPlan as any;
+    expect(plan?.status).toBe("COMPLETED");
+    expect(plan?.steps.length).toBe(4);
+    expect(plan?.steps.some((s: any) => s.agentId === "web-coding-agent")).toBe(true);
+
+    // Also test the streaming generator route
+    const streamEvents: any[] = [];
+    for await (const chunk of intelligenceService.streamMessage({
+      userId: userA,
+      organizationId: orgA,
+      message: "create me a landing page",
+      inputMode: "text",
+    })) {
+      streamEvents.push(chunk);
+    }
+
+    const metadataEvent = streamEvents.find((e) => e.event === "metadata");
+    expect(metadataEvent).toBeDefined();
+    expect(metadataEvent.data.previewPayload).toBeDefined();
+  });
 });
