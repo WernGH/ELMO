@@ -10,7 +10,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:supabase": "node scripts/verify-supabase-connection.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.1",

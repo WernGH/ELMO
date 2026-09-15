@@ -55,7 +55,7 @@ describe("Real Gemini API Connection & ELMO Intelligence", () => {
       expect(result.success).toBe(true);
       expect(result.error).toBeUndefined();
     }
-  }, 15000);
+  }, 35000);
 
   it("2. Real Generation: GeminiService generates live response from Gemini API", async () => {
     const gemini = GeminiService.getInstance();

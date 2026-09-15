@@ -4,6 +4,7 @@
  */
 
 import { MockDataStore, FunnelRow, FunnelStepRow } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { FunnelType, FunnelStatus, FunnelBusinessContext, StepType } from "@/types/database.types";
 
 export interface CreateFunnelParams {
@@ -71,6 +72,17 @@ export class FunnelService {
 
   public async getFunnels(userId: string, organizationId: string): Promise<ServiceResult<FunnelRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("funnels") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as FunnelRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -88,6 +100,18 @@ export class FunnelService {
     funnelId: string
   ): Promise<ServiceResult<FunnelRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("funnels") as any)
+          .select("*")
+          .eq("id", funnelId)
+          .eq("organization_id", organizationId)
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Funnel not found." };
+        return { data: data as FunnelRow, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -129,6 +153,29 @@ export class FunnelService {
         ...params.businessContext,
       };
 
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("funnels") as any)
+          .insert({
+            organization_id: params.organizationId,
+            name: params.name.trim(),
+            description: params.description || null,
+            goal: params.goal || null,
+            funnel_type: params.funnelType || "Lead Generation",
+            target_audience: params.targetAudience || null,
+            offer: params.offer || null,
+            primary_conversion_goal: params.primaryConversionGoal || null,
+            status: params.status || "draft",
+            business_context: businessContext,
+            settings: params.settings || {},
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to create funnel." };
+        return { data: data as FunnelRow, error: null };
+      }
+
       const created = this.store.createFunnel({
         organization_id: params.organizationId,
         name: params.name.trim(),
@@ -152,15 +199,6 @@ export class FunnelService {
 
   public async updateFunnel(params: UpdateFunnelParams): Promise<ServiceResult<FunnelRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
-      const existing = this.store.getFunnelWithRLS(params.userId, params.organizationId, params.funnelId);
-      if (!existing) {
-        return { data: null, error: "Funnel not found or access denied." };
-      }
-
       const updates: Partial<FunnelRow> = {};
       if (params.name !== undefined) updates.name = params.name.trim();
       if (params.description !== undefined) updates.description = params.description;
@@ -171,6 +209,32 @@ export class FunnelService {
       if (params.primaryConversionGoal !== undefined) updates.primary_conversion_goal = params.primaryConversionGoal;
       if (params.status !== undefined) updates.status = params.status;
       if (params.settings !== undefined) updates.settings = params.settings;
+      if (params.businessContext !== undefined) {
+        updates.business_context = params.businessContext as any;
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("funnels") as any)
+          .update(updates)
+          .eq("id", params.funnelId)
+          .eq("organization_id", params.organizationId)
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to update funnel." };
+        return { data: data as FunnelRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
+      }
+
+      const existing = this.store.getFunnelWithRLS(params.userId, params.organizationId, params.funnelId);
+      if (!existing) {
+        return { data: null, error: "Funnel not found or access denied." };
+      }
+
       if (params.businessContext !== undefined) {
         updates.business_context = {
           ...(existing.business_context as Record<string, unknown>),
@@ -192,6 +256,17 @@ export class FunnelService {
     funnelId: string
   ): Promise<ServiceResult<boolean>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { error } = await (supabase.from("funnels") as any)
+          .delete()
+          .eq("id", funnelId)
+          .eq("organization_id", organizationId);
+
+        if (error) return { data: false, error: error.message };
+        return { data: true, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -213,6 +288,17 @@ export class FunnelService {
     funnelId: string
   ): Promise<ServiceResult<FunnelStepRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("funnel_steps") as any)
+          .select("*")
+          .eq("funnel_id", funnelId)
+          .order("step_order", { ascending: true });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as FunnelStepRow[]) || [], error: null };
+      }
+
       const steps = this.store.queryFunnelStepsWithRLS(userId, organizationId, funnelId);
       return { data: steps, error: null };
     } catch (err: unknown) {
@@ -223,6 +309,32 @@ export class FunnelService {
 
   public async createFunnelStep(params: CreateFunnelStepParams): Promise<ServiceResult<FunnelStepRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data: currentSteps } = await (supabase.from("funnel_steps") as any)
+          .select("step_order")
+          .eq("funnel_id", params.funnelId);
+
+        const steps = (currentSteps || []) as { step_order: number }[];
+        const nextOrder = params.stepOrder ?? (steps.length > 0 ? Math.max(...steps.map((s) => s.step_order)) + 1 : 1);
+
+        const { data, error } = await (supabase.from("funnel_steps") as any)
+          .insert({
+            funnel_id: params.funnelId,
+            step_order: nextOrder,
+            step_type: params.stepType,
+            name: params.name,
+            page_id: params.pageId || null,
+            goal: params.goal || null,
+            settings: params.settings || {},
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to create funnel step." };
+        return { data: data as FunnelStepRow, error: null };
+      }
+
       const funnel = this.store.getFunnelWithRLS(params.userId, params.organizationId, params.funnelId);
       if (!funnel) {
         return { data: null, error: "Funnel not found or access denied." };
@@ -255,6 +367,16 @@ export class FunnelService {
     stepId: string
   ): Promise<ServiceResult<boolean>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { error } = await (supabase.from("funnel_steps") as any)
+          .delete()
+          .eq("id", stepId);
+
+        if (error) return { data: false, error: error.message };
+        return { data: true, error: null };
+      }
+
       const success = this.store.deleteFunnelStep(userId, organizationId, stepId);
       if (!success) {
         return { data: null, error: "Step could not be deleted or not found." };

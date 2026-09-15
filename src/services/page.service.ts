@@ -5,6 +5,7 @@
  */
 
 import { MockDataStore, PageRow, PageSectionRow } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { PageType, PageStatus, SectionType } from "@/types/database.types";
 import { ServiceResult } from "./funnel.service";
 
@@ -67,6 +68,18 @@ export class PageService {
     funnelId?: string
   ): Promise<ServiceResult<PageRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        let q = (supabase.from("pages") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+        if (funnelId) q = q.eq("funnel_id", funnelId);
+        const { data, error } = await q;
+        if (error) return { data: null, error: error.message };
+        return { data: (data as PageRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -84,6 +97,17 @@ export class PageService {
     pageId: string
   ): Promise<ServiceResult<PageRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("pages") as any)
+          .select("*")
+          .eq("id", pageId)
+          .eq("organization_id", organizationId)
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Page not found." };
+        return { data: data as PageRow, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -100,15 +124,35 @@ export class PageService {
 
   public async createPage(params: CreatePageParams): Promise<ServiceResult<PageRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
       if (!params.name?.trim()) {
         return { data: null, error: "Page name is required." };
       }
       if (!params.slug?.trim()) {
         return { data: null, error: "Page slug is required." };
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("pages") as any)
+          .insert({
+            organization_id: params.organizationId,
+            funnel_id: params.funnelId || null,
+            name: params.name.trim(),
+            slug: params.slug.toLowerCase().trim().replace(/[^a-z0-9-_]/g, "-"),
+            page_type: params.pageType || "landing",
+            status: params.status || "draft",
+            title: params.title || params.name.trim(),
+            settings: params.settings || {},
+            metadata: params.metadata || {},
+          })
+          .select()
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Failed to create page." };
+        return { data: data as PageRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
       }
 
       // If funnelId is provided, verify it belongs to organization
@@ -140,15 +184,6 @@ export class PageService {
 
   public async updatePage(params: UpdatePageParams): Promise<ServiceResult<PageRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
-      const existing = this.store.getPageWithRLS(params.userId, params.organizationId, params.pageId);
-      if (!existing) {
-        return { data: null, error: "Page not found or access denied." };
-      }
-
       const updates: Partial<PageRow> = {};
       if (params.name !== undefined) updates.name = params.name.trim();
       if (params.slug !== undefined) updates.slug = params.slug.toLowerCase().trim().replace(/[^a-z0-9-_]/g, "-");
@@ -157,6 +192,27 @@ export class PageService {
       if (params.title !== undefined) updates.title = params.title;
       if (params.settings !== undefined) updates.settings = params.settings;
       if (params.metadata !== undefined) updates.metadata = params.metadata;
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("pages") as any)
+          .update(updates)
+          .eq("id", params.pageId)
+          .eq("organization_id", params.organizationId)
+          .select()
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Failed to update page." };
+        return { data: data as PageRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
+      }
+
+      const existing = this.store.getPageWithRLS(params.userId, params.organizationId, params.pageId);
+      if (!existing) {
+        return { data: null, error: "Page not found or access denied." };
+      }
 
       const updated = this.store.updatePage(params.userId, params.organizationId, params.pageId, updates);
       return { data: updated, error: null };
@@ -172,6 +228,16 @@ export class PageService {
     pageId: string
   ): Promise<ServiceResult<boolean>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { error } = await (supabase.from("pages") as any)
+          .delete()
+          .eq("id", pageId)
+          .eq("organization_id", organizationId);
+        if (error) return { data: false, error: error.message };
+        return { data: true, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -193,6 +259,16 @@ export class PageService {
     pageId: string
   ): Promise<ServiceResult<PageSectionRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("page_sections") as any)
+          .select("*")
+          .eq("page_id", pageId)
+          .order("order_index", { ascending: true });
+        if (error) return { data: null, error: error.message };
+        return { data: (data as PageSectionRow[]) || [], error: null };
+      }
+
       const sections = this.store.queryPageSectionsWithRLS(userId, organizationId, pageId);
       return { data: sections, error: null };
     } catch (err: unknown) {
@@ -203,6 +279,29 @@ export class PageService {
 
   public async createSection(params: CreatePageSectionParams): Promise<ServiceResult<PageSectionRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data: existingSections } = await (supabase.from("page_sections") as any)
+          .select("order_index")
+          .eq("page_id", params.pageId);
+        const secList = (existingSections || []) as { order_index: number }[];
+        const nextIndex = params.orderIndex ?? (secList.length > 0 ? Math.max(...secList.map((s) => s.order_index)) + 1 : 1);
+        const { data, error } = await (supabase.from("page_sections") as any)
+          .insert({
+            page_id: params.pageId,
+            section_type: params.sectionType,
+            order_index: nextIndex,
+            content: params.content || {},
+            layout: params.layout || {},
+            styles: params.styles || {},
+            settings: params.settings || {},
+          })
+          .select()
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Failed to create section." };
+        return { data: data as PageSectionRow, error: null };
+      }
+
       const page = this.store.getPageWithRLS(params.userId, params.organizationId, params.pageId);
       if (!page) {
         return { data: null, error: "Target page not found or access denied." };
@@ -237,6 +336,17 @@ export class PageService {
     updates: Partial<PageSectionRow>
   ): Promise<ServiceResult<PageSectionRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("page_sections") as any)
+          .update(updates)
+          .eq("id", sectionId)
+          .select()
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Failed to update section." };
+        return { data: data as PageSectionRow, error: null };
+      }
+
       const updated = this.store.updatePageSection(userId, organizationId, sectionId, updates);
       if (!updated) {
         return { data: null, error: "Section not found or access denied." };
@@ -254,6 +364,15 @@ export class PageService {
     sectionId: string
   ): Promise<ServiceResult<boolean>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { error } = await (supabase.from("page_sections") as any)
+          .delete()
+          .eq("id", sectionId);
+        if (error) return { data: false, error: error.message };
+        return { data: true, error: null };
+      }
+
       const success = this.store.deletePageSection(userId, organizationId, sectionId);
       if (!success) {
         return { data: null, error: "Section not found or access denied." };

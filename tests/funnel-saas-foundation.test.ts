@@ -226,6 +226,7 @@ describe("ELMO Phase 1: Funnel SaaS Foundation Architecture", () => {
 
       // Record journey event
       const eventRes = await contactService.recordEvent({
+        userId: userA,
         organizationId: orgA,
         contactId: contactRes.data!.id,
         eventType: "webinar_joined",

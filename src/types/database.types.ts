@@ -986,6 +986,71 @@ export interface Database {
           created_at?: string;
         };
       };
+      agent_executions: {
+        Row: {
+          id: string;
+          execution_id: string;
+          organization_id: string;
+          user_id: string | null;
+          request_id: string | null;
+          goal: string;
+          selected_agents: Json;
+          status: string;
+          plan: Json | null;
+          tool_calls: Json;
+          results: Json;
+          verification: Json | null;
+          retries: number;
+          failures: Json;
+          duration_ms: number | null;
+          started_at: string;
+          completed_at: string | null;
+          metadata: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          execution_id: string;
+          organization_id: string;
+          user_id?: string | null;
+          request_id?: string | null;
+          goal: string;
+          selected_agents?: Json;
+          status?: string;
+          plan?: Json | null;
+          tool_calls?: Json;
+          results?: Json;
+          verification?: Json | null;
+          retries?: number;
+          failures?: Json;
+          duration_ms?: number | null;
+          started_at?: string;
+          completed_at?: string | null;
+          metadata?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          execution_id?: string;
+          organization_id?: string;
+          user_id?: string | null;
+          request_id?: string | null;
+          goal?: string;
+          selected_agents?: Json;
+          status?: string;
+          plan?: Json | null;
+          tool_calls?: Json;
+          results?: Json;
+          verification?: Json | null;
+          retries?: number;
+          failures?: Json;
+          duration_ms?: number | null;
+          started_at?: string;
+          completed_at?: string | null;
+          metadata?: Json;
+          created_at?: string;
+        };
+      };
     };
     Functions: {
       is_org_member: {
@@ -1003,3 +1068,6 @@ export interface Database {
 export type CompanyMemoryRow = Database["public"]["Tables"]["company_memories"]["Row"];
 export type CompanyMemoryInsert = Database["public"]["Tables"]["company_memories"]["Insert"];
 export type CompanyMemoryUpdate = Database["public"]["Tables"]["company_memories"]["Update"];
+export type AgentExecutionRow = Database["public"]["Tables"]["agent_executions"]["Row"];
+export type AgentExecutionInsert = Database["public"]["Tables"]["agent_executions"]["Insert"];
+export type AgentExecutionUpdate = Database["public"]["Tables"]["agent_executions"]["Update"];

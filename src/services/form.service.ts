@@ -5,6 +5,7 @@
  */
 
 import { MockDataStore, FormRow, FormSubmissionRow } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { ContactService } from "./contact.service";
 import { ServiceResult } from "./funnel.service";
 
@@ -72,6 +73,17 @@ export class FormService {
     pageId?: string
   ): Promise<ServiceResult<FormRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        let q = (supabase.from("forms") as any)
+          .select("*")
+          .eq("organization_id", organizationId);
+        if (pageId) q = q.eq("page_id", pageId);
+        const { data, error } = await q;
+        if (error) return { data: null, error: error.message };
+        return { data: (data as FormRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -85,12 +97,30 @@ export class FormService {
 
   public async createForm(params: CreateFormParams): Promise<ServiceResult<FormRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
       if (!params.name?.trim()) {
         return { data: null, error: "Form name is required." };
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("forms") as any)
+          .insert({
+            organization_id: params.organizationId,
+            page_id: params.pageId || null,
+            name: params.name.trim(),
+            fields: params.fields || [],
+            settings: params.settings || {},
+            submit_action: (params.submitAction as Record<string, unknown>) || {},
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to create form." };
+        return { data: data as FormRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
       }
 
       const form = this.store.createForm({
@@ -116,6 +146,18 @@ export class FormService {
     updates: Partial<FormRow>;
   }): Promise<ServiceResult<FormRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("forms") as any)
+          .update(params.updates)
+          .eq("id", params.formId)
+          .eq("organization_id", params.organizationId)
+          .select()
+          .single();
+        if (error || !data) return { data: null, error: error?.message || "Failed to update form." };
+        return { data: data as FormRow, error: null };
+      }
+
       if (!this.store.isOrgMember(params.userId, params.organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -137,6 +179,76 @@ export class FormService {
 
   public async submitForm(params: SubmitFormParams): Promise<ServiceResult<FormSubmissionResult>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data: form } = await (supabase.from("forms") as any)
+          .select("*")
+          .eq("id", params.formId)
+          .eq("organization_id", params.organizationId)
+          .single();
+
+        if (!form) return { data: null, error: "Form not found." };
+
+        const rawData = params.submissionData || {};
+        const emailValue = (rawData.email as string)?.trim().toLowerCase();
+        let contactId: string | null = null;
+        const submitAction = (form.submit_action as FormSubmitAction) || {};
+
+        if (emailValue) {
+          const firstName = (rawData.firstName || rawData.first_name || rawData.name) as string | undefined;
+          const lastName = (rawData.lastName || rawData.last_name) as string | undefined;
+          const phone = (rawData.phone || rawData.tel) as string | undefined;
+
+          const contactRes = await this.contactService.findOrCreateContact({
+            userId: "00000000-0000-0000-0000-000000000001",
+            organizationId: params.organizationId,
+            email: emailValue,
+            firstName,
+            lastName,
+            phone,
+            source: `Form: ${form.name}`,
+            tags: submitAction.add_tags || [],
+            customFields: rawData,
+          });
+
+          if (contactRes.data) {
+            contactId = contactRes.data.id;
+            await this.contactService.recordEvent({
+              userId: "00000000-0000-0000-0000-000000000001",
+              organizationId: params.organizationId,
+              contactId,
+              eventType: "form_submission",
+              funnelId: params.funnelId,
+              pageId: params.pageId || form.page_id || undefined,
+              metadata: { form_id: form.id, form_name: form.name, submission: rawData },
+            });
+          }
+        }
+
+        const { data: submission, error: subErr } = await (supabase.from("form_submissions") as any)
+          .insert({
+            organization_id: params.organizationId,
+            form_id: params.formId,
+            contact_id: contactId,
+            submission_data: rawData,
+          })
+          .select()
+          .single();
+
+        if (subErr || !submission) return { data: null, error: subErr?.message || "Failed to submit form." };
+
+        await (supabase.from("analytics_events") as any).insert({
+          organization_id: params.organizationId,
+          event_type: "form_submission",
+          funnel_id: params.funnelId || null,
+          page_id: params.pageId || form.page_id || null,
+          contact_id: contactId,
+          metadata: { form_id: form.id, submission_id: submission.id },
+        });
+
+        return { data: { submission: submission as FormSubmissionRow, contactId, submitAction }, error: null };
+      }
+
       const form = this.store.forms.get(params.formId);
       if (!form || form.organization_id !== params.organizationId) {
         return { data: null, error: "Form not found." };
@@ -178,6 +290,7 @@ export class FormService {
 
           // 2. Record journey event on contact
           await this.contactService.recordEvent({
+            userId: systemUserId,
             organizationId: params.organizationId,
             contactId,
             eventType: "form_submission",
@@ -233,6 +346,18 @@ export class FormService {
     formId: string
   ): Promise<ServiceResult<FormSubmissionRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("form_submissions") as any)
+          .select("*")
+          .eq("form_id", formId)
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as FormSubmissionRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }

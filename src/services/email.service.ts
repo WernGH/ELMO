@@ -10,6 +10,7 @@ import {
   EmailSequenceRow,
   EmailSequenceStepRow,
 } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { EmailTemplateStatus, EmailSequenceStatus, DelayUnit } from "@/types/database.types";
 import { ServiceResult } from "./funnel.service";
 
@@ -64,6 +65,17 @@ export class EmailService {
     organizationId: string
   ): Promise<ServiceResult<EmailTemplateRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("email_templates") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as EmailTemplateRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -77,11 +89,30 @@ export class EmailService {
 
   public async createTemplate(params: CreateEmailTemplateParams): Promise<ServiceResult<EmailTemplateRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
       if (!params.name?.trim() || !params.subject?.trim()) {
         return { data: null, error: "Template name and subject are required." };
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("email_templates") as any)
+          .insert({
+            organization_id: params.organizationId,
+            name: params.name.trim(),
+            subject: params.subject.trim(),
+            body: params.body,
+            variables: params.variables || [],
+            status: params.status || "draft",
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to create email template." };
+        return { data: data as EmailTemplateRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
       }
 
       const created = this.store.createEmailTemplate({
@@ -113,6 +144,26 @@ export class EmailService {
     }
   ): Promise<ServiceResult<EmailTemplateRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const updatePayload: Record<string, unknown> = {};
+        if (params.name !== undefined) updatePayload.name = params.name.trim();
+        if (params.subject !== undefined) updatePayload.subject = params.subject.trim();
+        if (params.body !== undefined) updatePayload.body = params.body;
+        if (params.variables !== undefined) updatePayload.variables = params.variables;
+        if (params.status !== undefined) updatePayload.status = params.status;
+
+        const { data, error } = await (supabase.from("email_templates") as any)
+          .update(updatePayload)
+          .eq("id", params.templateId)
+          .eq("organization_id", params.organizationId)
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to update email template." };
+        return { data: data as EmailTemplateRow, error: null };
+      }
+
       if (!this.store.isOrgMember(params.userId, params.organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -140,6 +191,17 @@ export class EmailService {
     organizationId: string
   ): Promise<ServiceResult<EmailSequenceRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("email_sequences") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as EmailSequenceRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -153,11 +215,28 @@ export class EmailService {
 
   public async createSequence(params: CreateEmailSequenceParams): Promise<ServiceResult<EmailSequenceRow>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
       if (!params.name?.trim()) {
         return { data: null, error: "Sequence name is required." };
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("email_sequences") as any)
+          .insert({
+            organization_id: params.organizationId,
+            name: params.name.trim(),
+            description: params.description || null,
+            status: params.status || "draft",
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to create email sequence." };
+        return { data: data as EmailSequenceRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
       }
 
       const created = this.store.createEmailSequence({
@@ -181,6 +260,17 @@ export class EmailService {
     sequenceId: string
   ): Promise<ServiceResult<EmailSequenceStepRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("email_sequence_steps") as any)
+          .select("*")
+          .eq("sequence_id", sequenceId)
+          .order("step_order", { ascending: true });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as EmailSequenceStepRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -194,6 +284,36 @@ export class EmailService {
 
   public async addSequenceStep(params: CreateSequenceStepParams): Promise<ServiceResult<EmailSequenceStepRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data: existingSteps } = await (supabase.from("email_sequence_steps") as any)
+          .select("step_order")
+          .eq("sequence_id", params.sequenceId);
+
+        const nextOrder =
+          params.stepOrder ??
+          (existingSteps && existingSteps.length > 0
+            ? Math.max(...existingSteps.map((s: any) => s.step_order)) + 1
+            : 1);
+
+        const { data, error } = await (supabase.from("email_sequence_steps") as any)
+          .insert({
+            sequence_id: params.sequenceId,
+            step_order: nextOrder,
+            delay_value: params.delayValue,
+            delay_unit: params.delayUnit,
+            subject: params.subject,
+            body: params.body,
+            template_id: params.templateId || null,
+            status: "active",
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to add sequence step." };
+        return { data: data as EmailSequenceStepRow, error: null };
+      }
+
       if (!this.store.isOrgMember(params.userId, params.organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }

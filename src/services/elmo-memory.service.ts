@@ -17,6 +17,7 @@
  */
 
 import { MockDataStore, CompanyMemoryRow } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   MemoryScope,
   MemoryCategory,
@@ -177,6 +178,39 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
       const confidenceLevel = params.confidenceLevel || "high";
       const confidence = params.confidence ?? CONFIDENCE_LEVEL_SCORES[confidenceLevel];
 
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("company_memories") as any)
+          .insert({
+            organization_id: params.organizationId,
+            user_id: params.userId,
+            scope: params.scope || "organization",
+            category: params.category || "business",
+            title: params.title || null,
+            content: params.content.trim(),
+            normalized_content:
+              params.normalizedContent || this.normalizeMultilingualText(params.content),
+            metadata: params.metadata || {},
+            importance_score: importance,
+            confidence,
+            confidence_level: confidenceLevel,
+            status: params.status || "active",
+            source: params.source || "conversation",
+            source_reference: params.sourceReference || null,
+            entity_type: params.entityType || "business",
+            entity_id: params.entityId || null,
+            valid_from: params.validFrom || new Date().toISOString(),
+            valid_until: params.validUntil || null,
+          })
+          .select()
+          .single();
+
+        if (error || !data) {
+          return { data: null, error: error?.message || "Failed to create memory in Supabase." };
+        }
+        return { data: data as CompanyMemoryRow, error: null };
+      }
+
       const row = this.store.createMemory({
         organization_id: params.organizationId,
         user_id: params.userId,
@@ -211,6 +245,20 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
     organizationId: string,
     memoryId: string
   ): Promise<ServiceResult<CompanyMemoryRow>> {
+    if (isSupabaseConfigured()) {
+      const supabase = createBrowserSupabase();
+      const { data, error } = await (supabase.from("company_memories") as any)
+        .select("*")
+        .eq("id", memoryId)
+        .eq("organization_id", organizationId)
+        .single();
+
+      if (error || !data) {
+        return { data: null, error: error?.message || "Memory record not found." };
+      }
+      return { data: data as CompanyMemoryRow, error: null };
+    }
+
     if (!this.store.isOrgMember(userId, organizationId)) {
       return { data: null, error: "Unauthorized: User is not an organization member." };
     }
@@ -228,15 +276,6 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
     updates: Partial<CreateMemoryParams>
   ): Promise<ServiceResult<CompanyMemoryRow>> {
     try {
-      if (!this.store.isOrgMember(userId, organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
-      const existing = this.store.memories.get(memoryId);
-      if (!existing || existing.organization_id !== organizationId) {
-        return { data: null, error: "Memory record not found." };
-      }
-
       const updatePayload: Partial<CompanyMemoryRow> = {};
       if (updates.title !== undefined) updatePayload.title = updates.title;
       if (updates.content !== undefined) {
@@ -254,6 +293,34 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
       }
       if (updates.status !== undefined) updatePayload.status = updates.status;
       if (updates.validUntil !== undefined) updatePayload.valid_until = updates.validUntil;
+      if (updates.metadata !== undefined) {
+        updatePayload.metadata = updates.metadata as any;
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("company_memories") as any)
+          .update(updatePayload)
+          .eq("id", memoryId)
+          .eq("organization_id", organizationId)
+          .select()
+          .single();
+
+        if (error || !data) {
+          return { data: null, error: error?.message || "Failed to update memory in Supabase." };
+        }
+        return { data: data as CompanyMemoryRow, error: null };
+      }
+
+      if (!this.store.isOrgMember(userId, organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
+      }
+
+      const existing = this.store.memories.get(memoryId);
+      if (!existing || existing.organization_id !== organizationId) {
+        return { data: null, error: "Memory record not found." };
+      }
+
       if (updates.metadata !== undefined) {
         updatePayload.metadata = { ...(existing.metadata as Record<string, unknown>), ...updates.metadata };
       }
@@ -347,6 +414,19 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
     organizationId: string,
     memoryId: string
   ): Promise<ServiceResult<boolean>> {
+    if (isSupabaseConfigured()) {
+      const supabase = createBrowserSupabase();
+      const { error } = await (supabase.from("company_memories") as any)
+        .delete()
+        .eq("id", memoryId)
+        .eq("organization_id", organizationId);
+
+      if (error) {
+        return { data: false, error: error.message };
+      }
+      return { data: true, error: null };
+    }
+
     if (!this.store.isOrgMember(userId, organizationId)) {
       return { data: false, error: "Unauthorized: User is not an organization member." };
     }
@@ -362,6 +442,28 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
     organizationId: string,
     memoryId: string
   ): Promise<ServiceResult<CompanyMemoryRow[]>> {
+    if (isSupabaseConfigured()) {
+      const supabase = createBrowserSupabase();
+      const { data: memory } = await (supabase.from("company_memories") as any)
+        .select("*")
+        .eq("id", memoryId)
+        .eq("organization_id", organizationId)
+        .single();
+
+      if (!memory) {
+        return { data: null, error: "Memory record not found." };
+      }
+
+      const { data: history } = await (supabase.from("company_memories") as any)
+        .select("*")
+        .eq("organization_id", organizationId)
+        .eq("entity_type", memory.entity_type)
+        .eq("category", memory.category)
+        .order("created_at", { ascending: true });
+
+      return { data: (history as CompanyMemoryRow[]) || [], error: null };
+    }
+
     if (!this.store.isOrgMember(userId, organizationId)) {
       return { data: null, error: "Unauthorized: User is not an organization member." };
     }
@@ -390,6 +492,51 @@ export class ElmoMemoryService implements ICompanyMemoryEngine {
     organizationId: string,
     options?: MemoryQueryOptions
   ): Promise<CompanyMemoryRow[]> {
+    if (isSupabaseConfigured()) {
+      const supabase = createBrowserSupabase();
+      let q = (supabase.from("company_memories") as any)
+        .select("*")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: false });
+
+      if (options?.category) q = q.eq("category", options.category);
+      if (options?.scope) q = q.eq("scope", options.scope);
+      if (options?.status) {
+        if (Array.isArray(options.status)) {
+          q = q.in("status", options.status);
+        } else {
+          q = q.eq("status", options.status);
+        }
+      }
+      if (options?.entityType) q = q.eq("entity_type", options.entityType);
+      if (options?.limit) q = q.limit(options.limit);
+
+      const { data, error } = await q;
+      if (error || !data) return [];
+      let records = data as CompanyMemoryRow[];
+
+      if (options?.searchQuery?.trim()) {
+        const query = options.searchQuery.toLowerCase().trim();
+        records = records.filter(
+          (m) =>
+            m.content.toLowerCase().includes(query) ||
+            (m.title && m.title.toLowerCase().includes(query)) ||
+            (m.normalized_content && m.normalized_content.toLowerCase().includes(query))
+        );
+      }
+
+      if (options?.minImportance) {
+        records = records.filter((m) => Number(m.importance_score) >= options.minImportance!);
+      }
+      if (options?.minConfidence) {
+        records = records.filter((m) => Number(m.confidence) >= options.minConfidence!);
+      }
+
+      const offset = options?.offset || 0;
+      const limit = options?.limit || 50;
+      return records.slice(offset, offset + limit);
+    }
+
     if (!this.store.isOrgMember(userId, organizationId)) {
       return [];
     }

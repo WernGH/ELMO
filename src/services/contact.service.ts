@@ -1,14 +1,13 @@
 /**
  * ELMO Phase 1 — Contact Service
  * Authoritative business service for Contacts, Tags, Contact-Tag associations, and Contact Journey Events.
- */
-
-import {
+ */import {
   MockDataStore,
   ContactRow,
   TagRow,
   ContactEventRow,
 } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { ContactStatus } from "@/types/database.types";
 import { ServiceResult } from "./funnel.service";
 
@@ -39,7 +38,7 @@ export interface UpdateContactParams {
 }
 
 export interface RecordContactEventParams {
-  userId?: string;
+  userId: string;
   organizationId: string;
   contactId: string;
   eventType: string;
@@ -72,6 +71,18 @@ export class ContactService {
     organizationId: string
   ): Promise<ServiceResult<ContactWithTags[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("contacts") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        const withTags = ((data || []) as ContactRow[]).map((c) => ({ ...c, tags: [] }));
+        return { data: withTags, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -93,6 +104,18 @@ export class ContactService {
     contactId: string
   ): Promise<ServiceResult<ContactWithTags>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("contacts") as any)
+          .select("*")
+          .eq("id", contactId)
+          .eq("organization_id", organizationId)
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Contact not found." };
+        return { data: { ...data, tags: [] }, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -110,13 +133,67 @@ export class ContactService {
 
   public async findOrCreateContact(params: CreateContactParams): Promise<ServiceResult<ContactWithTags>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
       const cleanEmail = params.email?.toLowerCase().trim();
       if (!cleanEmail || !cleanEmail.includes("@")) {
         return { data: null, error: "A valid email address is required." };
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data: existing } = await (supabase.from("contacts") as any)
+          .select("*")
+          .eq("organization_id", params.organizationId)
+          .eq("email", cleanEmail)
+          .maybeSingle();
+
+        let contactRow: ContactRow;
+        if (existing) {
+          const updates: Partial<ContactRow> = {};
+          if (params.firstName && !existing.first_name) updates.first_name = params.firstName;
+          if (params.lastName && !existing.last_name) updates.last_name = params.lastName;
+          if (params.phone && !existing.phone) updates.phone = params.phone;
+          if (params.customFields) {
+            updates.custom_fields = {
+              ...(existing.custom_fields as Record<string, unknown>),
+              ...params.customFields,
+            };
+          }
+          if (Object.keys(updates).length > 0) {
+            const { data: updated } = await (supabase.from("contacts") as any)
+              .update(updates)
+              .eq("id", existing.id)
+              .select()
+              .single();
+            contactRow = updated || existing;
+          } else {
+            contactRow = existing;
+          }
+        } else {
+          const { data: created, error: createErr } = await (supabase.from("contacts") as any)
+            .insert({
+              organization_id: params.organizationId,
+              first_name: params.firstName || null,
+              last_name: params.lastName || null,
+              email: cleanEmail,
+              phone: params.phone || null,
+              status: params.status || "lead",
+              source: params.source || "organic",
+              custom_fields: params.customFields || {},
+            })
+            .select()
+            .single();
+
+          if (createErr || !created) {
+            return { data: null, error: createErr?.message || "Failed to create contact." };
+          }
+          contactRow = created;
+        }
+
+        return { data: { ...contactRow, tags: [] }, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
       }
 
       // Check if contact already exists in this organization
@@ -178,15 +255,6 @@ export class ContactService {
 
   public async updateContact(params: UpdateContactParams): Promise<ServiceResult<ContactWithTags>> {
     try {
-      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
-      }
-
-      const existing = this.store.getContactWithRLS(params.userId, params.organizationId, params.contactId);
-      if (!existing) {
-        return { data: null, error: "Contact not found or access denied." };
-      }
-
       const updates: Partial<ContactRow> = {};
       if (params.email) updates.email = params.email.toLowerCase().trim();
       if (params.firstName !== undefined) updates.first_name = params.firstName;
@@ -195,6 +263,28 @@ export class ContactService {
       if (params.status !== undefined) updates.status = params.status;
       if (params.source !== undefined) updates.source = params.source;
       if (params.customFields !== undefined) updates.custom_fields = params.customFields;
+
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("contacts") as any)
+          .update(updates)
+          .eq("id", params.contactId)
+          .eq("organization_id", params.organizationId)
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to update contact." };
+        return { data: { ...data, tags: [] }, error: null };
+      }
+
+      if (!this.store.isOrgMember(params.userId, params.organizationId)) {
+        return { data: null, error: "Unauthorized: User is not an organization member." };
+      }
+
+      const existing = this.store.getContactWithRLS(params.userId, params.organizationId, params.contactId);
+      if (!existing) {
+        return { data: null, error: "Contact not found or access denied." };
+      }
 
       const updated = this.store.updateContact(params.userId, params.organizationId, params.contactId, updates);
       if (!updated) {
@@ -214,6 +304,17 @@ export class ContactService {
     contactId: string
   ): Promise<ServiceResult<boolean>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { error } = await (supabase.from("contacts") as any)
+          .delete()
+          .eq("id", contactId)
+          .eq("organization_id", organizationId);
+
+        if (error) return { data: false, error: error.message };
+        return { data: true, error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -313,6 +414,24 @@ export class ContactService {
   // Contact Events
   public async recordEvent(params: RecordContactEventParams): Promise<ServiceResult<ContactEventRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("contact_events") as any)
+          .insert({
+            organization_id: params.organizationId,
+            contact_id: params.contactId,
+            event_type: params.eventType,
+            funnel_id: params.funnelId || null,
+            page_id: params.pageId || null,
+            metadata: params.metadata || {},
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to record event." };
+        return { data: data as ContactEventRow, error: null };
+      }
+
       const created = this.store.recordContactEvent({
         organization_id: params.organizationId,
         contact_id: params.contactId,
@@ -334,6 +453,18 @@ export class ContactService {
     contactId: string
   ): Promise<ServiceResult<ContactEventRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("contact_events") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .eq("contact_id", contactId)
+          .order("created_at", { ascending: false });
+
+        if (error) return { data: null, error: error.message };
+        return { data: (data as ContactEventRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }

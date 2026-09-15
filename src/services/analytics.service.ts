@@ -5,6 +5,7 @@
  */
 
 import { MockDataStore, AnalyticsEventRow } from "@/lib/supabase/mock-store";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { AnalyticsEventType } from "@/types/database.types";
 import { ServiceResult } from "./funnel.service";
 
@@ -43,6 +44,24 @@ export class AnalyticsService {
 
   public async recordEvent(params: RecordAnalyticsEventParams): Promise<ServiceResult<AnalyticsEventRow>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data, error } = await (supabase.from("analytics_events") as any)
+          .insert({
+            organization_id: params.organizationId,
+            event_type: params.eventType,
+            funnel_id: params.funnelId || null,
+            page_id: params.pageId || null,
+            contact_id: params.contactId || null,
+            metadata: params.metadata || {},
+          })
+          .select()
+          .single();
+
+        if (error || !data) return { data: null, error: error?.message || "Failed to record analytics event." };
+        return { data: data as AnalyticsEventRow, error: null };
+      }
+
       const row = this.store.recordAnalyticsEvent({
         organization_id: params.organizationId,
         event_type: params.eventType,
@@ -64,6 +83,22 @@ export class AnalyticsService {
     filter?: { eventType?: string; funnelId?: string; pageId?: string }
   ): Promise<ServiceResult<AnalyticsEventRow[]>> {
     try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        let q = (supabase.from("analytics_events") as any)
+          .select("*")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false });
+
+        if (filter?.eventType) q = q.eq("event_type", filter.eventType);
+        if (filter?.funnelId) q = q.eq("funnel_id", filter.funnelId);
+        if (filter?.pageId) q = q.eq("page_id", filter.pageId);
+
+        const { data, error } = await q;
+        if (error) return { data: null, error: error.message };
+        return { data: (data as AnalyticsEventRow[]) || [], error: null };
+      }
+
       if (!this.store.isOrgMember(userId, organizationId)) {
         return { data: null, error: "Unauthorized: User is not an organization member." };
       }
@@ -81,11 +116,16 @@ export class AnalyticsService {
     funnelId: string
   ): Promise<ServiceResult<FunnelMetricsSummary>> {
     try {
-      if (!this.store.isOrgMember(userId, organizationId)) {
-        return { data: null, error: "Unauthorized: User is not an organization member." };
+      let events: AnalyticsEventRow[] = [];
+      if (isSupabaseConfigured()) {
+        const eventsRes = await this.getEvents(userId, organizationId, { funnelId });
+        events = eventsRes.data || [];
+      } else {
+        if (!this.store.isOrgMember(userId, organizationId)) {
+          return { data: null, error: "Unauthorized: User is not an organization member." };
+        }
+        events = this.store.queryAnalyticsEventsWithRLS(userId, organizationId, { funnelId });
       }
-
-      const events = this.store.queryAnalyticsEventsWithRLS(userId, organizationId, { funnelId });
       const breakdown: Record<string, number> = {};
 
       let visitors = 0;
