@@ -1,18 +1,8 @@
-import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
+import { createClient as createBrowserSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { MockDataStore } from "@/lib/supabase/mock-store";
 import { Organization, OrganizationWithMemberRole, Role } from "@/types/organization.types";
 import { Json } from "@/types/database.types";
 import { slugify } from "@/lib/utils";
-
-const isSupabaseConfigured = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  return Boolean(
-    url &&
-    !url.includes("placeholder") &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
-    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.includes("placeholder")
-  );
-};
 
 export class OrganizationService {
   private static instance: OrganizationService;
