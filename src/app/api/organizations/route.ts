@@ -185,3 +185,90 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+/**
+ * DELETE /api/organizations
+ * Deletes an organization and cascades to associated data (Restricted to 'owner')
+ */
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const orgId = searchParams.get("orgId");
+    const userId = searchParams.get("userId") || "00000000-0000-0000-0000-000000000001";
+
+    if (!orgId) {
+      return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
+    }
+
+    if (orgId === "11111111-1111-1111-1111-111111111111") {
+      return NextResponse.json(
+        { error: "Protected System Workspace: The master organization cannot be deleted." },
+        { status: 403 }
+      );
+    }
+
+    const mockStore = MockDataStore.getInstance();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const { createAdminClient } = await import("@/lib/supabase/admin");
+        const supabase = createAdminClient();
+
+        // Check if user is owner
+        const isValidAuthUser =
+          Boolean(userId) &&
+          userId !== "00000000-0000-0000-0000-000000000001" &&
+          !userId.startsWith("usr-");
+
+        if (isValidAuthUser) {
+          const { data: member } = await (supabase.from("organization_members") as any)
+            .select("role")
+            .eq("organization_id", orgId)
+            .eq("user_id", userId)
+            .single();
+
+          if (!member || (member as any).role !== "owner") {
+            return NextResponse.json(
+              { error: "Permission denied: Only organization owners can delete this business." },
+              { status: 403 }
+            );
+          }
+        }
+
+        // Delete cascade in Supabase
+        await (supabase.from("organization_members") as any).delete().eq("organization_id", orgId);
+        await (supabase.from("conversations") as any).delete().eq("organization_id", orgId);
+        const { error: delError } = await (supabase.from("organizations") as any)
+          .delete()
+          .eq("id", orgId);
+
+        if (delError) {
+          console.warn("[/api/organizations] Supabase delete error:", delError);
+        }
+      } catch (adminErr) {
+        console.warn("[/api/organizations] Admin client error on delete:", adminErr);
+      }
+    }
+
+    // Mock store deletion & cleanup
+    mockStore.organizations.delete(orgId);
+    for (const [memId, mem] of mockStore.organizationMembers.entries()) {
+      if (mem.organization_id === orgId) {
+        mockStore.organizationMembers.delete(memId);
+      }
+    }
+    for (const [convId, conv] of mockStore.conversations.entries()) {
+      if (conv.organization_id === orgId) {
+        mockStore.conversations.delete(convId);
+      }
+    }
+
+    return NextResponse.json({ success: true, message: "Organization deleted successfully." });
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Internal Server Error: ${String(err)}` },
+      { status: 500 }
+    );
+  }
+}
+

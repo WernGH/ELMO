@@ -333,4 +333,111 @@ export class OrganizationService {
       return { data: null, error: message };
     }
   }
+
+  /**
+   * Delete an organization (Restricted to 'owner')
+   */
+  public async deleteOrganization(
+    userId: string,
+    orgId: string
+  ): Promise<{ success: boolean; error: string | null }> {
+    // Prevent deleting master root fallback organization
+    if (orgId === "11111111-1111-1111-1111-111111111111") {
+      return {
+        success: false,
+        error: "Protected System Workspace: The master organization cannot be deleted.",
+      };
+    }
+
+    // If running in browser environment, call API route
+    if (typeof window !== "undefined") {
+      try {
+        const res = await fetch(`/api/organizations?orgId=${orgId}&userId=${userId}`, {
+          method: "DELETE",
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) {
+          return { success: false, error: json.error || "Failed to delete organization." };
+        }
+        return { success: true, error: null };
+      } catch (err: any) {
+        return { success: false, error: err.message || "Network error deleting organization." };
+      }
+    }
+
+    try {
+      if (isSupabaseConfigured()) {
+        const getSupabase = () => {
+          if (typeof window === "undefined") {
+            try {
+              const { createAdminClient } = require("@/lib/supabase/admin");
+              return createAdminClient();
+            } catch {
+              return createBrowserSupabase();
+            }
+          }
+          return createBrowserSupabase();
+        };
+
+        const supabase = getSupabase();
+
+        // Check owner role
+        const { data: member } = await (supabase.from("organization_members") as any)
+          .select("role")
+          .eq("organization_id", orgId)
+          .eq("user_id", userId)
+          .single();
+
+        if (!member || (member as any).role !== "owner") {
+          return {
+            success: false,
+            error: "Permission denied: Only the organization owner can delete this business.",
+          };
+        }
+
+        // Delete cascades
+        await (supabase.from("organization_members") as any).delete().eq("organization_id", orgId);
+        await (supabase.from("conversations") as any).delete().eq("organization_id", orgId);
+        const { error: delError } = await (supabase.from("organizations") as any)
+          .delete()
+          .eq("id", orgId);
+
+        if (delError) {
+          return { success: false, error: delError.message };
+        }
+      }
+
+      // Mock Store Check & Execution
+      const role = this.mockStore.getOrgRole(userId, orgId);
+      if (role !== "owner") {
+        return {
+          success: false,
+          error: "Permission denied: Only the organization owner can delete this business.",
+        };
+      }
+
+      // Remove from mock store
+      this.mockStore.organizations.delete(orgId);
+
+      // Clean up members
+      for (const [memId, mem] of this.mockStore.organizationMembers.entries()) {
+        if (mem.organization_id === orgId) {
+          this.mockStore.organizationMembers.delete(memId);
+        }
+      }
+
+      // Clean up conversations
+      for (const [convId, conv] of this.mockStore.conversations.entries()) {
+        if (conv.organization_id === orgId) {
+          this.mockStore.conversations.delete(convId);
+        }
+      }
+
+      return { success: true, error: null };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error deleting organization.";
+      return { success: false, error: message };
+    }
+  }
 }
+

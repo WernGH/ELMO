@@ -23,10 +23,20 @@ import {
   X,
   ChevronRight,
   Eye,
+  EyeOff,
   AlertTriangle,
   Key,
   Layers,
   Cpu,
+  Globe,
+  Mail,
+  DollarSign,
+  Clock,
+  Radio,
+  Download,
+  FileText,
+  ShieldAlert,
+  LogOut,
 } from "lucide-react";
 import { AuthService } from "@/services/auth.service";
 import { OrganizationService } from "@/services/organization.service";
@@ -37,7 +47,6 @@ import {
   OrganizationWithMemberRole,
   Role,
   ROLE_HIERARCHY,
-  ROLE_PERMISSIONS,
 } from "@/types/organization.types";
 import { UserSession } from "@/types/auth.types";
 import { formatDate } from "@/lib/utils";
@@ -54,6 +63,36 @@ const INDUSTRIES = [
   "Manufacturing & Logistics",
   "Marketing & Digital Media",
   "Other Enterprise Domain",
+];
+
+const CURRENCIES = [
+  { code: "USD", symbol: "$", label: "USD ($) — US Dollar" },
+  { code: "EUR", symbol: "€", label: "EUR (€) — Euro" },
+  { code: "GBP", symbol: "£", label: "GBP (£) — British Pound" },
+  { code: "MYR", symbol: "RM", label: "MYR (RM) — Malaysian Ringgit" },
+  { code: "SGD", symbol: "S$", label: "SGD (S$) — Singapore Dollar" },
+  { code: "AUD", symbol: "A$", label: "AUD (A$) — Australian Dollar" },
+  { code: "JPY", symbol: "¥", label: "JPY (¥) — Japanese Yen" },
+];
+
+const TIMEZONES = [
+  "Asia/Kuala_Lumpur (UTC+08:00)",
+  "Asia/Singapore (UTC+08:00)",
+  "Asia/Tokyo (UTC+09:00)",
+  "Europe/London (UTC+00:00 / GMT)",
+  "Europe/Berlin (UTC+01:00 / CET)",
+  "America/New_York (UTC-05:00 / EST)",
+  "America/Chicago (UTC-06:00 / CST)",
+  "America/Los_Angeles (UTC-08:00 / PST)",
+  "UTC (Coordinated Universal Time)",
+];
+
+const RETENTION_PERIODS = [
+  { days: 30, label: "30 Days (Strict Ephemeral)" },
+  { days: 90, label: "90 Days (Recommended Standard)" },
+  { days: 180, label: "180 Days (Extended Audit)" },
+  { days: 365, label: "365 Days (1 Year Compliance)" },
+  { days: 0, label: "Indefinite / Permanent Retention" },
 ];
 
 const AUTONOMY_LEVELS = [
@@ -86,19 +125,25 @@ const AUTONOMY_LEVELS = [
 export default function SettingsPage() {
   const router = useRouter();
 
-  // Core state
+  // Core session & organization state
   const [session, setSession] = useState<UserSession | null>(null);
   const [organization, setOrganization] = useState<OrganizationWithMemberRole | null>(null);
   const [userOrganizations, setUserOrganizations] = useState<OrganizationWithMemberRole[]>([]);
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
-  
-  // Active tab
+
+  // Navigation tab
   const [activeTab, setActiveTab] = useState<"general" | "team" | "security">("general");
 
-  // Edit form state
+  // Edit organization form state
   const [orgName, setOrgName] = useState("");
   const [orgIndustry, setOrgIndustry] = useState(INDUSTRIES[0]);
   const [orgAutonomy, setOrgAutonomy] = useState<"supervised" | "co_pilot" | "autonomous">("supervised");
+  const [orgSupportEmail, setOrgSupportEmail] = useState("");
+  const [orgWebsite, setOrgWebsite] = useState("");
+  const [orgCurrency, setOrgCurrency] = useState("USD");
+  const [orgTimezone, setOrgTimezone] = useState(TIMEZONES[0]);
+  const [orgRetentionDays, setOrgRetentionDays] = useState(90);
+  const [orgWebhookUrl, setOrgWebhookUrl] = useState("");
   const [isSavingOrg, setIsSavingOrg] = useState(false);
 
   // Invite member state
@@ -114,6 +159,13 @@ export default function SettingsPage() {
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [createOrgError, setCreateOrgError] = useState<string | null>(null);
 
+  // Delete organization modal state (Danger Zone)
+  const [showDeleteOrgModal, setShowDeleteOrgModal] = useState(false);
+  const [orgToDelete, setOrgToDelete] = useState<OrganizationWithMemberRole | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeletingOrg, setIsDeletingOrg] = useState(false);
+  const [deleteOrgError, setDeleteOrgError] = useState<string | null>(null);
+
   // RBAC matrix modal
   const [showRbacMatrixModal, setShowRbacMatrixModal] = useState(false);
 
@@ -125,9 +177,10 @@ export default function SettingsPage() {
   const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [memberRoleFilter, setMemberRoleFilter] = useState<"all" | Role>("all");
 
-  // Notifications & Copy state
+  // Notifications, API key reveal & Copy state
   const [statusMessage, setStatusMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
 
   const authService = AuthService.getInstance();
   const orgService = OrganizationService.getInstance();
@@ -149,17 +202,7 @@ export default function SettingsPage() {
       if (activeId) {
         const { data: org } = await orgService.getOrganization(userId, activeId);
         if (org) {
-          setOrganization(org);
-          setOrgName(org.name);
-
-          const settingsObj =
-            typeof org.settings === "object" && org.settings !== null && !Array.isArray(org.settings)
-              ? (org.settings as Record<string, any>)
-              : {};
-
-          if (settingsObj.industry) setOrgIndustry(settingsObj.industry);
-          if (settingsObj.autonomy_mode) setOrgAutonomy(settingsObj.autonomy_mode);
-
+          populateOrgState(org);
           const { data: memList } = await memberService.getMembers(userId, org.id);
           setMembers(memList);
         }
@@ -174,6 +217,25 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const populateOrgState = (org: OrganizationWithMemberRole) => {
+    setOrganization(org);
+    setOrgName(org.name);
+
+    const s =
+      typeof org.settings === "object" && org.settings !== null && !Array.isArray(org.settings)
+        ? (org.settings as Record<string, any>)
+        : {};
+
+    setOrgIndustry(s.industry || INDUSTRIES[0]);
+    setOrgAutonomy(s.autonomy_mode || "supervised");
+    setOrgSupportEmail(s.support_email || "");
+    setOrgWebsite(s.website || "");
+    setOrgCurrency(s.currency || "USD");
+    setOrgTimezone(s.timezone || TIMEZONES[0]);
+    setOrgRetentionDays(typeof s.retention_days === "number" ? s.retention_days : 90);
+    setOrgWebhookUrl(s.webhook_url || "");
+  };
+
   // Switch active organization
   const handleSwitchOrganization = async (targetOrgId: string) => {
     if (!session?.user) return;
@@ -185,17 +247,7 @@ export default function SettingsPage() {
       return;
     }
 
-    setOrganization(org);
-    setOrgName(org.name);
-
-    const settingsObj =
-      typeof org.settings === "object" && org.settings !== null && !Array.isArray(org.settings)
-        ? (org.settings as Record<string, any>)
-        : {};
-
-    setOrgIndustry(settingsObj.industry || INDUSTRIES[0]);
-    setOrgAutonomy(settingsObj.autonomy_mode || "supervised");
-
+    populateOrgState(org);
     const { data: memList } = await memberService.getMembers(session.user.id, org.id);
     setMembers(memList);
 
@@ -226,6 +278,10 @@ export default function SettingsPage() {
     const { data: newOrg, error } = await orgService.createOrganization(userId, trimmed, {
       industry: newOrgIndustry,
       autonomy_mode: newOrgAutonomy,
+      support_email: `contact@${trimmed.toLowerCase().replace(/\s+/g, "")}.com`,
+      currency: "USD",
+      timezone: TIMEZONES[0],
+      retention_days: 90,
     });
 
     setIsCreatingOrg(false);
@@ -241,16 +297,11 @@ export default function SettingsPage() {
     };
 
     setUserOrganizations((prev) => [orgWithRole, ...prev]);
-    setOrganization(orgWithRole);
-    setOrgName(orgWithRole.name);
-    setOrgIndustry(newOrgIndustry);
-    setOrgAutonomy(newOrgAutonomy);
+    populateOrgState(orgWithRole);
 
-    // Refresh members for new org
     const { data: memList } = await memberService.getMembers(userId, newOrg.id);
     setMembers(memList);
 
-    // Save active org in storage
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("elmo_session");
       const parsed = stored ? JSON.parse(stored) : {};
@@ -268,7 +319,7 @@ export default function SettingsPage() {
     router.refresh();
   };
 
-  // Update company profile & autonomy
+  // Update company profile & workspace settings
   const handleUpdateCompanyProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session?.user || !organization || !orgName.trim()) return;
@@ -276,14 +327,26 @@ export default function SettingsPage() {
     setIsSavingOrg(true);
     setStatusMessage(null);
 
+    const currentSettings =
+      typeof organization.settings === "object" && organization.settings !== null && !Array.isArray(organization.settings)
+        ? (organization.settings as Record<string, any>)
+        : {};
+
     const { data: updated, error } = await orgService.updateOrganization(
       session.user.id,
       organization.id,
       {
         name: orgName.trim(),
         settings: {
+          ...currentSettings,
           industry: orgIndustry,
           autonomy_mode: orgAutonomy,
+          support_email: orgSupportEmail.trim(),
+          website: orgWebsite.trim(),
+          currency: orgCurrency,
+          timezone: orgTimezone,
+          retention_days: orgRetentionDays,
+          webhook_url: orgWebhookUrl.trim(),
         },
       }
     );
@@ -299,13 +362,115 @@ export default function SettingsPage() {
       };
       setOrganization(refreshedOrg);
       setUserOrganizations((prev) =>
-        prev.map((o) => (o.id === refreshedOrg.id ? { ...o, name: refreshedOrg.name } : o))
+        prev.map((o) => (o.id === refreshedOrg.id ? { ...o, name: refreshedOrg.name, settings: refreshedOrg.settings } : o))
       );
       setStatusMessage({
         type: "success",
-        text: "Organization profile and autonomy parameters updated successfully.",
+        text: "Organization profile and workspace settings saved successfully.",
       });
     }
+  };
+
+  // Trigger Delete Organization Modal
+  const promptDeleteOrganization = (org: OrganizationWithMemberRole) => {
+    setOrgToDelete(org);
+    setDeleteConfirmText("");
+    setDeleteOrgError(null);
+    setShowDeleteOrgModal(true);
+  };
+
+  // Execute Organization Deletion
+  const handleConfirmDeleteOrganization = async () => {
+    if (!session?.user || !orgToDelete) return;
+
+    if (orgToDelete.id === "11111111-1111-1111-1111-111111111111") {
+      setDeleteOrgError("Protected Root Workspace: The master organization cannot be deleted.");
+      return;
+    }
+
+    const expectedName = orgToDelete.name.trim().toLowerCase();
+    const entered = deleteConfirmText.trim().toLowerCase();
+
+    if (entered !== expectedName && entered !== "delete") {
+      setDeleteOrgError(`Please enter "${orgToDelete.name}" or "DELETE" to confirm.`);
+      return;
+    }
+
+    setIsDeletingOrg(true);
+    setDeleteOrgError(null);
+
+    const { success, error } = await orgService.deleteOrganization(session.user.id, orgToDelete.id);
+    setIsDeletingOrg(false);
+
+    if (error || !success) {
+      setDeleteOrgError(error || "Failed to delete organization.");
+      return;
+    }
+
+    // Remove deleted organization from list
+    const remaining = userOrganizations.filter((o) => o.id !== orgToDelete.id);
+    setUserOrganizations(remaining);
+    setShowDeleteOrgModal(false);
+    setDeleteConfirmText("");
+
+    // If the active organization was deleted, switch to the first remaining organization
+    if (organization?.id === orgToDelete.id) {
+      const nextOrg = remaining[0] || null;
+      if (nextOrg) {
+        await handleSwitchOrganization(nextOrg.id);
+      }
+    }
+
+    setStatusMessage({
+      type: "success",
+      text: `Business workspace "${orgToDelete.name}" was permanently removed.`,
+    });
+    setOrgToDelete(null);
+    router.refresh();
+  };
+
+  // Export Workspace Data (.json)
+  const handleExportWorkspaceData = () => {
+    if (!organization) return;
+
+    const exportPayload = {
+      exportVersion: "ELMO-WS-v1.0",
+      exportedAt: new Date().toISOString(),
+      organization: {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        created_at: organization.created_at,
+        updated_at: organization.updated_at,
+        settings: organization.settings,
+        roleHierarchy: ROLE_HIERARCHY,
+      },
+      teamMembers: members.map((m) => ({
+        userId: m.user_id,
+        displayName: m.profile?.display_name || "Executive User",
+        email: m.email,
+        role: m.role,
+        joinedAt: m.created_at,
+      })),
+      securityAuditTelemetry: auditResult,
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `elmo-workspace-${organization.slug || "export"}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setStatusMessage({
+      type: "success",
+      text: `Workspace telemetry & settings exported to elmo-workspace-${organization.slug || "export"}.json`,
+    });
   };
 
   // Invite member
@@ -427,6 +592,7 @@ export default function SettingsPage() {
   const isOwner = organization?.role === "owner";
   const isOwnerOrAdmin = organization?.role === "owner" || organization?.role === "admin";
   const currentTier = organization?.role ? ROLE_HIERARCHY[organization.role] : 1;
+  const isMasterOrg = organization?.id === "11111111-1111-1111-1111-111111111111";
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-14 font-sans select-none">
@@ -447,15 +613,24 @@ export default function SettingsPage() {
             Organization Settings & Security
           </h1>
           <p className="text-xs sm:text-sm text-elmo-textMuted mt-1">
-            Manage multi-company profiles, team membership, 5-tier RBAC matrix, and live Row Level Security (RLS) isolation.
+            Manage multi-company profiles, team membership, 5-tier RBAC matrix, workspace governance, and Row Level Security.
           </p>
         </div>
 
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
+            onClick={handleExportWorkspaceData}
+            className="px-3.5 py-2 rounded-xl bg-surface-200 border border-surface-border text-xs font-mono font-medium text-zinc-300 hover:text-white hover:border-elmo-cyan/50 hover:bg-surface-100 transition-all flex items-center gap-2 cursor-pointer"
+            title="Export complete workspace schema and telemetry to JSON"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            Export Data
+          </button>
+
+          <button
             onClick={() => setShowRbacMatrixModal(true)}
-            className="px-3.5 py-2 rounded-xl bg-surface-200 border border-surface-border text-xs font-mono font-medium text-white hover:border-elmo-cyan/50 hover:bg-surface-100 transition-all flex items-center gap-2"
+            className="px-3.5 py-2 rounded-xl bg-surface-200 border border-surface-border text-xs font-mono font-medium text-white hover:border-elmo-cyan/50 hover:bg-surface-100 transition-all flex items-center gap-2 cursor-pointer"
             title="Inspect 5-tier role capabilities and permission matrix"
           >
             <Sliders className="w-3.5 h-3.5 text-purple-400" />
@@ -464,7 +639,7 @@ export default function SettingsPage() {
 
           <button
             onClick={() => setShowCreateOrgModal(true)}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-black font-semibold text-xs flex items-center gap-2 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(0,210,255,0.3)]"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-black font-semibold text-xs flex items-center gap-2 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(0,210,255,0.3)] cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             New Company
@@ -558,7 +733,7 @@ export default function SettingsPage() {
           }`}
         >
           <Building className="w-4 h-4" />
-          Company & Organizations
+          Company & Workspace
           <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-surface-200 border border-surface-border text-zinc-300">
             {userOrganizations.length}
           </span>
@@ -596,11 +771,11 @@ export default function SettingsPage() {
       </div>
 
       {/* ========================================================= */}
-      {/* TAB 1: COMPANY & MULTI-ORGANIZATION MANAGEMENT            */}
+      {/* TAB 1: COMPANY & WORKSPACE MANAGEMENT                     */}
       {/* ========================================================= */}
       {activeTab === "general" && (
         <div className="space-y-6">
-          {/* Multi-Organization Switcher Card */}
+          {/* Multi-Organization Switcher & Roster Card */}
           <div className="p-6 rounded-2xl bg-surface-card border border-surface-border space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-surface-border">
               <div>
@@ -609,12 +784,12 @@ export default function SettingsPage() {
                   All Companies in Your Roster
                 </h2>
                 <p className="text-xs text-elmo-textMuted mt-0.5">
-                  1-click switch between isolated corporate workspaces and business subsidiaries.
+                  1-click switch between isolated corporate workspaces, or remove businesses you no longer operate.
                 </p>
               </div>
               <button
                 onClick={() => setShowCreateOrgModal(true)}
-                className="px-3 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs font-medium text-white hover:bg-surface-100 hover:border-elmo-cyan/40 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
+                className="px-3 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs font-medium text-white hover:bg-surface-100 hover:border-elmo-cyan/40 transition-colors flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5 text-elmo-cyan" />
                 Add Another Company
@@ -624,6 +799,8 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {userOrganizations.map((org) => {
                 const isActive = org.id === organization?.id;
+                const isOrgOwner = org.role === "owner";
+                const isProtectedRoot = org.id === "11111111-1111-1111-1111-111111111111";
                 const orgSettings =
                   typeof org.settings === "object" && org.settings !== null && !Array.isArray(org.settings)
                     ? (org.settings as Record<string, any>)
@@ -652,9 +829,29 @@ export default function SettingsPage() {
                           {org.slug || org.id}
                         </p>
                       </div>
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-surface-200 border border-surface-border text-zinc-300">
-                        {org.role}
-                      </span>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-surface-200 border border-surface-border text-zinc-300">
+                          {org.role}
+                        </span>
+
+                        {/* Delete Business / Trash Button for Owners */}
+                        {isOrgOwner && !isProtectedRoot && (
+                          <button
+                            onClick={() => promptDeleteOrganization(org)}
+                            className="p-1 rounded-md text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title={`Delete ${org.name} permanently`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        {isProtectedRoot && (
+                          <span title="Master Root Workspace (Protected from deletion)">
+                            <Lock className="w-3 h-3 text-zinc-500" />
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-3 pt-3 border-t border-surface-border flex items-center justify-between text-[11px]">
@@ -665,7 +862,7 @@ export default function SettingsPage() {
                       {!isActive ? (
                         <button
                           onClick={() => handleSwitchOrganization(org.id)}
-                          className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-50 text-elmo-cyan text-xs font-semibold transition-colors flex items-center gap-1"
+                          className="px-2.5 py-1 rounded bg-surface-100 hover:bg-surface-50 text-elmo-cyan text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
                         >
                           Switch
                           <ChevronRight className="w-3 h-3" />
@@ -683,7 +880,7 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Active Company Profile & Autonomy Governance */}
+          {/* Active Company Profile & Workspace Parameters Form */}
           <div className="p-6 rounded-2xl bg-surface-card border border-surface-border space-y-6">
             <div className="flex items-center gap-2 pb-3 border-b border-surface-border">
               <Building className="w-5 h-5 text-elmo-cyan" />
@@ -696,6 +893,7 @@ export default function SettingsPage() {
             </div>
 
             <form onSubmit={handleUpdateCompanyProfile} className="space-y-6">
+              {/* Core Identifiers & Sector */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-elmo-text mb-1.5">
@@ -735,7 +933,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Unique Identifiers */}
+              {/* Unique Identifiers (Slug & UUID) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div>
                   <label className="block text-xs font-semibold text-elmo-text mb-1.5">
@@ -751,7 +949,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => copyToClipboard(organization?.slug || "", "slug")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-elmo-textDim hover:text-white transition-colors"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-elmo-textDim hover:text-white transition-colors cursor-pointer"
                       title="Copy slug"
                     >
                       {copiedField === "slug" ? (
@@ -777,7 +975,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => copyToClipboard(organization?.id || "", "id")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-elmo-textDim hover:text-white transition-colors"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-elmo-textDim hover:text-white transition-colors cursor-pointer"
                       title="Copy Organization ID"
                     >
                       {copiedField === "id" ? (
@@ -786,6 +984,86 @@ export default function SettingsPage() {
                         <Copy className="w-3.5 h-3.5" />
                       )}
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Workspace Operational Branding & Localization */}
+              <div className="pt-3 border-t border-surface-border space-y-4">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-elmo-cyan" />
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                    Workspace Localization & Contact
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5 flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-elmo-textDim" />
+                      Executive Support / Contact Email
+                    </label>
+                    <input
+                      type="email"
+                      disabled={!isOwnerOrAdmin}
+                      value={orgSupportEmail}
+                      onChange={(e) => setOrgSupportEmail(e.target.value)}
+                      placeholder="e.g. operations@acme.com"
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5 flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-elmo-textDim" />
+                      Corporate Website / Domain
+                    </label>
+                    <input
+                      type="url"
+                      disabled={!isOwnerOrAdmin}
+                      value={orgWebsite}
+                      onChange={(e) => setOrgWebsite(e.target.value)}
+                      placeholder="https://acme.com"
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5 flex items-center gap-1.5">
+                      <DollarSign className="w-3.5 h-3.5 text-elmo-textDim" />
+                      Default Operational Currency
+                    </label>
+                    <select
+                      disabled={!isOwnerOrAdmin}
+                      value={orgCurrency}
+                      onChange={(e) => setOrgCurrency(e.target.value)}
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors cursor-pointer"
+                    >
+                      {CURRENCIES.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-elmo-textDim" />
+                      Primary Workspace Timezone
+                    </label>
+                    <select
+                      disabled={!isOwnerOrAdmin}
+                      value={orgTimezone}
+                      onChange={(e) => setOrgTimezone(e.target.value)}
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors cursor-pointer"
+                    >
+                      {TIMEZONES.map((tz) => (
+                        <option key={tz} value={tz}>
+                          {tz}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               </div>
@@ -837,6 +1115,97 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              {/* Data Governance & Webhooks */}
+              <div className="pt-3 border-t border-surface-border space-y-4">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                    Data Governance & Webhook Relays
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5">
+                      Conversation & Audit Retention
+                    </label>
+                    <select
+                      disabled={!isOwnerOrAdmin}
+                      value={orgRetentionDays}
+                      onChange={(e) => setOrgRetentionDays(Number(e.target.value))}
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors cursor-pointer"
+                    >
+                      {RETENTION_PERIODS.map((rp) => (
+                        <option key={rp.days} value={rp.days}>
+                          {rp.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-elmo-textDim mt-1 font-mono">
+                      Automated deletion of voice logs and conversation drafts past retention horizon.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-elmo-text mb-1.5">
+                      Outbound Webhook Relay URL
+                    </label>
+                    <input
+                      type="url"
+                      disabled={!isOwnerOrAdmin}
+                      value={orgWebhookUrl}
+                      onChange={(e) => setOrgWebhookUrl(e.target.value)}
+                      placeholder="https://hooks.slack.com/services/..."
+                      className="w-full text-xs bg-surface-200 border border-surface-border rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-elmo-cyan disabled:opacity-60 transition-colors"
+                    />
+                    <p className="text-[10px] text-elmo-textDim mt-1 font-mono">
+                      Relay high-priority ELMO events and agent completions to external channels.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Workspace API Key Preview */}
+                <div className="p-3.5 rounded-xl bg-surface-200/40 border border-surface-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-4 h-4 text-amber-400" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Workspace Developer API Key</p>
+                      <p className="text-[11px] font-mono text-elmo-textDim">
+                        {showApiKey ? `elmo_live_${organization?.id?.replace(/-/g, "").slice(0, 24)}` : "••••••••••••••••••••••••••••••••"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="p-1.5 rounded-lg bg-surface-200 hover:bg-surface-100 text-zinc-300 text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      <span className="text-[11px]">{showApiKey ? "Mask" : "Reveal"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        copyToClipboard(
+                          `elmo_live_${organization?.id?.replace(/-/g, "").slice(0, 24)}`,
+                          "apiKey"
+                        )
+                      }
+                      className="p-1.5 rounded-lg bg-surface-200 hover:bg-surface-100 text-zinc-300 text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedField === "apiKey" ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span className="text-[11px]">Copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Save Button */}
               <div className="flex items-center justify-between pt-4 border-t border-surface-border text-xs text-elmo-textDim">
                 <span>Created: {formatDate(organization?.created_at)}</span>
@@ -847,11 +1216,65 @@ export default function SettingsPage() {
                     className="px-5 py-2 rounded-xl bg-elmo-cyan text-black font-semibold text-xs flex items-center gap-2 hover:bg-elmo-cyanDim transition-colors disabled:opacity-50 cursor-pointer shadow-[0_0_12px_rgba(0,210,255,0.3)]"
                   >
                     <Save className="w-3.5 h-3.5" />
-                    {isSavingOrg ? "Saving Profile..." : "Save Organization Profile"}
+                    {isSavingOrg ? "Saving Settings..." : "Save Workspace Settings"}
                   </button>
                 )}
               </div>
             </form>
+          </div>
+
+          {/* ========================================================= */}
+          {/* DANGER ZONE: DELETE BUSINESS / WORKSPACE                  */}
+          {/* ========================================================= */}
+          <div className="p-6 rounded-2xl bg-red-950/15 border border-red-500/30 space-y-4">
+            <div className="flex items-center gap-2 pb-2 border-b border-red-500/20">
+              <ShieldAlert className="w-5 h-5 text-red-400" />
+              <div>
+                <h2 className="text-base font-bold text-red-400">Danger Zone — Business Removal</h2>
+                <p className="text-xs text-zinc-400">
+                  Irreversible administrative operations for this corporate workspace.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+              <div>
+                <h3 className="text-sm font-semibold text-white">
+                  Delete &quot;{organization?.name}&quot; Workspace
+                </h3>
+                <p className="text-xs text-zinc-400 max-w-xl mt-0.5 leading-relaxed">
+                  Permanently deletes this business organization, team member associations, CRM funnels, and conversation histories. 
+                  {isMasterOrg ? (
+                    <strong className="text-amber-300 block mt-1">
+                      Note: This is the system master organization and is protected from permanent deletion.
+                    </strong>
+                  ) : (
+                    " This action cannot be undone."
+                  )}
+                </p>
+              </div>
+
+              {isOwner ? (
+                <button
+                  type="button"
+                  disabled={isMasterOrg}
+                  onClick={() => organization && promptDeleteOrganization(organization)}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold font-mono flex items-center gap-2 transition-all self-start sm:self-auto shrink-0 ${
+                    isMasterOrg
+                      ? "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed"
+                      : "bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500 hover:text-white hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] cursor-pointer"
+                  }`}
+                  title={isMasterOrg ? "Master root organization cannot be deleted" : "Delete workspace"}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {isMasterOrg ? "Protected Workspace" : "Delete Business Workspace"}
+                </button>
+              ) : (
+                <span className="text-[11px] font-mono text-zinc-500 bg-surface-200 px-3 py-1.5 rounded-lg border border-surface-border">
+                  Owner Authorization Required
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -861,7 +1284,6 @@ export default function SettingsPage() {
       {/* ========================================================= */}
       {activeTab === "team" && (
         <div className="space-y-6">
-          {/* Overview & Matrix Trigger */}
           <div className="p-6 rounded-2xl bg-surface-card border border-surface-border space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-surface-border">
               <div>
@@ -876,7 +1298,7 @@ export default function SettingsPage() {
 
               <button
                 onClick={() => setShowRbacMatrixModal(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs font-mono text-elmo-cyan hover:border-elmo-cyan transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-1.5 rounded-lg bg-surface-200 border border-surface-border text-xs font-mono text-elmo-cyan hover:border-elmo-cyan transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <Sliders className="w-3.5 h-3.5 text-purple-400" />
                 View Permission Matrix
@@ -968,7 +1390,7 @@ export default function SettingsPage() {
               <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
                 <button
                   onClick={() => setMemberRoleFilter("all")}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono uppercase transition-colors ${
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-mono uppercase transition-colors cursor-pointer ${
                     memberRoleFilter === "all"
                       ? "bg-elmo-cyan/20 text-elmo-cyan border border-elmo-cyan/40"
                       : "text-elmo-textDim hover:text-white"
@@ -982,7 +1404,7 @@ export default function SettingsPage() {
                     <button
                       key={r}
                       onClick={() => setMemberRoleFilter(r)}
-                      className={`px-2.5 py-1 rounded-md text-[11px] font-mono uppercase transition-colors ${
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-mono uppercase transition-colors cursor-pointer ${
                         memberRoleFilter === r
                           ? "bg-elmo-cyan/20 text-elmo-cyan border border-elmo-cyan/40"
                           : "text-elmo-textDim hover:text-white"
@@ -1084,7 +1506,7 @@ export default function SettingsPage() {
                                     m.profile?.display_name || m.email || "Member"
                                   )
                                 }
-                                className="p-1.5 rounded-lg text-elmo-textDim hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                className="p-1.5 rounded-lg text-elmo-textDim hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
                                 title="Remove member from organization"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1224,7 +1646,7 @@ export default function SettingsPage() {
           <div className="w-full max-w-lg rounded-2xl bg-[#070D18] border border-cyan-500/40 p-6 shadow-[0_0_30px_rgba(0,210,255,0.25)] relative">
             <button
               onClick={() => setShowCreateOrgModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#0E1A2E] transition-colors"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#0E1A2E] transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1301,7 +1723,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => setShowCreateOrgModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1309,7 +1731,7 @@ export default function SettingsPage() {
                 <button
                   type="submit"
                   disabled={isCreatingOrg || !newOrgName.trim()}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 text-black font-semibold text-xs flex items-center gap-2 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(0,210,255,0.3)] disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 text-black font-semibold text-xs flex items-center gap-2 hover:brightness-110 transition-all shadow-[0_0_15px_rgba(0,210,255,0.3)] disabled:opacity-50 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   {isCreatingOrg ? "Creating Workspace..." : "Create Organization"}
@@ -1321,14 +1743,92 @@ export default function SettingsPage() {
       )}
 
       {/* ========================================================= */}
-      {/* MODAL 2: 5-TIER RBAC PERMISSION MATRIX                    */}
+      {/* MODAL 2: DELETE BUSINESS CONFIRMATION (DANGER ZONE)       */}
+      {/* ========================================================= */}
+      {showDeleteOrgModal && orgToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-[#070D18] border border-red-500/50 p-6 shadow-[0_0_35px_rgba(239,68,68,0.3)] relative">
+            <button
+              onClick={() => setShowDeleteOrgModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#0E1A2E] transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 pb-4 border-b border-red-500/20">
+              <div className="w-10 h-10 rounded-xl bg-red-950/40 border border-red-500/40 flex items-center justify-center text-red-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">Permanently Delete Business</h3>
+                <p className="text-xs text-red-400 font-mono">
+                  Irreversible Organization Removal
+                </p>
+              </div>
+            </div>
+
+            {deleteOrgError && (
+              <div className="mt-4 p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {deleteOrgError}
+              </div>
+            )}
+
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                You are about to permanently remove{" "}
+                <strong className="text-white underline">{orgToDelete.name}</strong>. This will purge all associated member roles, conversation history, automated funnels, and CRM contacts.
+              </p>
+
+              <div className="p-3 rounded-xl bg-red-950/20 border border-red-500/20 text-xs font-mono text-zinc-400">
+                Type <strong className="text-red-300 select-all">{orgToDelete.name}</strong> or <strong className="text-red-300">DELETE</strong> to confirm:
+              </div>
+
+              <input
+                type="text"
+                placeholder={orgToDelete.name}
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="w-full text-xs bg-[#0A1424] border border-red-500/30 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-red-400"
+              />
+            </div>
+
+            <div className="pt-4 mt-5 border-t border-[#14233A] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteOrgModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={
+                  isDeletingOrg ||
+                  (deleteConfirmText.trim().toLowerCase() !== orgToDelete.name.trim().toLowerCase() &&
+                    deleteConfirmText.trim().toUpperCase() !== "DELETE")
+                }
+                onClick={handleConfirmDeleteOrganization}
+                className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {isDeletingOrg ? "Purging Workspace..." : "Confirm Permanent Deletion"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3: 5-TIER RBAC PERMISSION MATRIX                    */}
       {/* ========================================================= */}
       {showRbacMatrixModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-3xl rounded-2xl bg-[#070D18] border border-cyan-500/40 p-6 shadow-[0_0_30px_rgba(0,210,255,0.25)] relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setShowRbacMatrixModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#0E1A2E] transition-colors"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#0E1A2E] transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1359,7 +1859,7 @@ export default function SettingsPage() {
                 </thead>
                 <tbody className="divide-y divide-[#14233A] font-mono text-[11px]">
                   <tr>
-                    <td className="py-3 px-4 font-sans text-white font-medium">Delete Organization</td>
+                    <td className="py-3 px-4 font-sans text-white font-medium">Delete Business / Workspace</td>
                     <td className="py-3 px-3 text-center text-emerald-400">✓</td>
                     <td className="py-3 px-3 text-center text-zinc-600">—</td>
                     <td className="py-3 px-3 text-center text-zinc-600">—</td>
@@ -1430,7 +1930,7 @@ export default function SettingsPage() {
               <span>Your current tier: <strong className="text-white uppercase font-mono">{organization?.role || "Viewer"}</strong> (Tier {currentTier}/5)</span>
               <button
                 onClick={() => setShowRbacMatrixModal(false)}
-                className="px-4 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-100 text-white font-semibold text-xs transition-colors"
+                className="px-4 py-1.5 rounded-lg bg-surface-200 hover:bg-surface-100 text-white font-semibold text-xs transition-colors cursor-pointer"
               >
                 Close Matrix
               </button>

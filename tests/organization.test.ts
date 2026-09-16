@@ -83,4 +83,54 @@ describe("OrganizationService - Multi-Tenant Architecture", () => {
     expect(data).toBeNull();
     expect(error).toContain("Permission denied");
   });
+
+  it("should allow an owner to delete an organization and clean up associated records", async () => {
+    const ownerId = "owner-alpha-123";
+    const { data: org } = await orgService.createOrganization(ownerId, "Temporary Business Ventures");
+    expect(org).toBeDefined();
+    const orgId = org!.id;
+
+    // Verify it exists in store
+    expect(mockStore.organizations.has(orgId)).toBe(true);
+
+    const { success, error } = await orgService.deleteOrganization(ownerId, orgId);
+    expect(error).toBeNull();
+    expect(success).toBe(true);
+
+    // Verify it is removed
+    expect(mockStore.organizations.has(orgId)).toBe(false);
+  });
+
+  it("should prevent non-owner from deleting an organization", async () => {
+    const ownerId = "owner-alpha-123";
+    const nonOwnerId = "member-beta-456";
+
+    const { data: org } = await orgService.createOrganization(ownerId, "Valuable Business Co");
+    const orgId = org!.id;
+
+    // Add member
+    mockStore.organizationMembers.set("mem-beta-test", {
+      id: "mem-beta-test",
+      organization_id: orgId,
+      user_id: nonOwnerId,
+      role: "admin",
+      created_at: new Date().toISOString(),
+    });
+
+    const { success, error } = await orgService.deleteOrganization(nonOwnerId, orgId);
+    expect(success).toBe(false);
+    expect(error).toContain("Permission denied");
+    expect(mockStore.organizations.has(orgId)).toBe(true);
+  });
+
+  it("should prevent deletion of protected master root organization", async () => {
+    const ownerId = "00000000-0000-0000-0000-000000000001";
+    const masterOrgId = "11111111-1111-1111-1111-111111111111";
+
+    const { success, error } = await orgService.deleteOrganization(ownerId, masterOrgId);
+    expect(success).toBe(false);
+    expect(error).toContain("Protected System Workspace");
+    expect(mockStore.organizations.has(masterOrgId)).toBe(true);
+  });
 });
+
