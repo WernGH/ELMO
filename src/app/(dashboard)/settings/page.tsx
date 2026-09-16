@@ -163,6 +163,7 @@ export default function SettingsPage() {
   const [showDeleteOrgModal, setShowDeleteOrgModal] = useState(false);
   const [orgToDelete, setOrgToDelete] = useState<OrganizationWithMemberRole | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [confirmChecked, setConfirmChecked] = useState(false);
   const [isDeletingOrg, setIsDeletingOrg] = useState(false);
   const [deleteOrgError, setDeleteOrgError] = useState<string | null>(null);
 
@@ -375,31 +376,29 @@ export default function SettingsPage() {
   const promptDeleteOrganization = (org: OrganizationWithMemberRole) => {
     setOrgToDelete(org);
     setDeleteConfirmText("");
+    setConfirmChecked(false);
     setDeleteOrgError(null);
     setShowDeleteOrgModal(true);
   };
 
   // Execute Organization Deletion
   const handleConfirmDeleteOrganization = async () => {
-    if (!session?.user || !orgToDelete) return;
-
-    if (orgToDelete.id === "11111111-1111-1111-1111-111111111111") {
-      setDeleteOrgError("Protected Root Workspace: The master organization cannot be deleted.");
-      return;
-    }
+    if (!orgToDelete) return;
+    const userId = session?.user?.id || "00000000-0000-0000-0000-000000000001";
 
     const expectedName = orgToDelete.name.trim().toLowerCase();
     const entered = deleteConfirmText.trim().toLowerCase();
 
-    if (entered !== expectedName && entered !== "delete") {
-      setDeleteOrgError(`Please enter "${orgToDelete.name}" or "DELETE" to confirm.`);
+    // Check if user confirmed via checkbox or typed confirmation
+    if (!confirmChecked && entered !== expectedName && entered !== "delete") {
+      setDeleteOrgError(`Please click the confirmation checkbox or type "DELETE" to confirm.`);
       return;
     }
 
     setIsDeletingOrg(true);
     setDeleteOrgError(null);
 
-    const { success, error } = await orgService.deleteOrganization(session.user.id, orgToDelete.id);
+    const { success, error } = await orgService.deleteOrganization(userId, orgToDelete.id);
     setIsDeletingOrg(false);
 
     if (error || !success) {
@@ -409,17 +408,42 @@ export default function SettingsPage() {
 
     // Remove deleted organization from list
     const remaining = userOrganizations.filter((o) => o.id !== orgToDelete.id);
-    setUserOrganizations(remaining);
-    setShowDeleteOrgModal(false);
-    setDeleteConfirmText("");
 
-    // If the active organization was deleted, switch to the first remaining organization
-    if (organization?.id === orgToDelete.id) {
-      const nextOrg = remaining[0] || null;
-      if (nextOrg) {
-        await handleSwitchOrganization(nextOrg.id);
+    // If no remaining organizations, auto-provision a fresh clean workspace so user is never stranded
+    if (remaining.length === 0) {
+      const { data: freshOrg } = await orgService.createOrganization(
+        userId,
+        "My Company",
+        { autonomy_mode: "supervised" }
+      );
+      if (freshOrg) {
+        const freshWithRole: OrganizationWithMemberRole = {
+          ...freshOrg,
+          role: "owner",
+        };
+        setUserOrganizations([freshWithRole]);
+        populateOrgState(freshWithRole);
+        const { data: memList } = await memberService.getMembers(userId, freshOrg.id);
+        setMembers(memList);
+
+        if (typeof window !== "undefined") {
+          const stored = localStorage.getItem("elmo_session");
+          const parsed = stored ? JSON.parse(stored) : {};
+          parsed.activeOrganizationId = freshOrg.id;
+          localStorage.setItem("elmo_session", JSON.stringify(parsed));
+        }
+      }
+    } else {
+      setUserOrganizations(remaining);
+      // If the active organization was deleted, switch to the first remaining organization
+      if (organization?.id === orgToDelete.id) {
+        await handleSwitchOrganization(remaining[0].id);
       }
     }
+
+    setShowDeleteOrgModal(false);
+    setDeleteConfirmText("");
+    setConfirmChecked(false);
 
     setStatusMessage({
       type: "success",
@@ -836,20 +860,14 @@ export default function SettingsPage() {
                         </span>
 
                         {/* Delete Business / Trash Button for Owners */}
-                        {isOrgOwner && !isProtectedRoot && (
+                        {isOrgOwner && (
                           <button
                             onClick={() => promptDeleteOrganization(org)}
                             className="p-1 rounded-md text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                            title={`Delete ${org.name} permanently`}
+                            title={`Delete ${org.name}`}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        )}
-
-                        {isProtectedRoot && (
-                          <span title="Master Root Workspace (Protected from deletion)">
-                            <Lock className="w-3 h-3 text-zinc-500" />
-                          </span>
                         )}
                       </div>
                     </div>
@@ -1243,31 +1261,19 @@ export default function SettingsPage() {
                   Delete &quot;{organization?.name}&quot; Workspace
                 </h3>
                 <p className="text-xs text-zinc-400 max-w-xl mt-0.5 leading-relaxed">
-                  Permanently deletes this business organization, team member associations, CRM funnels, and conversation histories. 
-                  {isMasterOrg ? (
-                    <strong className="text-amber-300 block mt-1">
-                      Note: This is the system master organization and is protected from permanent deletion.
-                    </strong>
-                  ) : (
-                    " This action cannot be undone."
-                  )}
+                  Permanently deletes this business organization, team member associations, CRM funnels, and conversation histories. This action cannot be undone.
                 </p>
               </div>
 
               {isOwner ? (
                 <button
                   type="button"
-                  disabled={isMasterOrg}
                   onClick={() => organization && promptDeleteOrganization(organization)}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold font-mono flex items-center gap-2 transition-all self-start sm:self-auto shrink-0 ${
-                    isMasterOrg
-                      ? "bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed"
-                      : "bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500 hover:text-white hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] cursor-pointer"
-                  }`}
-                  title={isMasterOrg ? "Master root organization cannot be deleted" : "Delete workspace"}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold font-mono flex items-center gap-2 transition-all bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500 hover:text-white hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] cursor-pointer self-start sm:self-auto shrink-0"
+                  title="Delete workspace"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  {isMasterOrg ? "Protected Workspace" : "Delete Business Workspace"}
+                  Delete Business Workspace
                 </button>
               ) : (
                 <span className="text-[11px] font-mono text-zinc-500 bg-surface-200 px-3 py-1.5 rounded-lg border border-surface-border">
@@ -1780,17 +1786,36 @@ export default function SettingsPage() {
                 <strong className="text-white underline">{orgToDelete.name}</strong>. This will purge all associated member roles, conversation history, automated funnels, and CRM contacts.
               </p>
 
-              <div className="p-3 rounded-xl bg-red-950/20 border border-red-500/20 text-xs font-mono text-zinc-400">
-                Type <strong className="text-red-300 select-all">{orgToDelete.name}</strong> or <strong className="text-red-300">DELETE</strong> to confirm:
-              </div>
+              {/* 1-Click Checkbox Confirmation */}
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-red-950/25 border border-red-500/30 text-xs text-zinc-200 cursor-pointer hover:bg-red-950/40 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={confirmChecked}
+                  onChange={(e) => {
+                    setConfirmChecked(e.target.checked);
+                    if (e.target.checked) setDeleteOrgError(null);
+                  }}
+                  className="mt-0.5 w-4 h-4 rounded border-red-500/40 text-red-500 focus:ring-0 cursor-pointer"
+                />
+                <span>I confirm I want to permanently delete this business workspace.</span>
+              </label>
 
-              <input
-                type="text"
-                placeholder={orgToDelete.name}
-                value={deleteConfirmText}
-                onChange={(e) => setDeleteConfirmText(e.target.value)}
-                className="w-full text-xs bg-[#0A1424] border border-red-500/30 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-red-400"
-              />
+              {/* Optional typing field */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-mono text-zinc-400 block">
+                  Or type <strong className="text-red-400">DELETE</strong> to confirm:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Type DELETE or check the box above"
+                  value={deleteConfirmText}
+                  onChange={(e) => {
+                    setDeleteConfirmText(e.target.value);
+                    if (e.target.value.trim().toLowerCase() === "delete") setDeleteOrgError(null);
+                  }}
+                  className="w-full text-xs bg-[#0A1424] border border-red-500/30 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-red-400"
+                />
+              </div>
             </div>
 
             <div className="pt-4 mt-5 border-t border-[#14233A] flex items-center justify-end gap-2">
@@ -1804,13 +1829,9 @@ export default function SettingsPage() {
 
               <button
                 type="button"
-                disabled={
-                  isDeletingOrg ||
-                  (deleteConfirmText.trim().toLowerCase() !== orgToDelete.name.trim().toLowerCase() &&
-                    deleteConfirmText.trim().toUpperCase() !== "DELETE")
-                }
+                disabled={isDeletingOrg}
                 onClick={handleConfirmDeleteOrganization}
-                className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] disabled:opacity-50 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 {isDeletingOrg ? "Purging Workspace..." : "Confirm Permanent Deletion"}

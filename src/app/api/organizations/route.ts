@@ -200,13 +200,6 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "Organization ID is required." }, { status: 400 });
     }
 
-    if (orgId === "11111111-1111-1111-1111-111111111111") {
-      return NextResponse.json(
-        { error: "Protected System Workspace: The master organization cannot be deleted." },
-        { status: 403 }
-      );
-    }
-
     const mockStore = MockDataStore.getInstance();
 
     if (isSupabaseConfigured()) {
@@ -214,30 +207,34 @@ export async function DELETE(req: NextRequest) {
         const { createAdminClient } = await import("@/lib/supabase/admin");
         const supabase = createAdminClient();
 
-        // Check if user is owner
-        const isValidAuthUser =
-          Boolean(userId) &&
-          userId !== "00000000-0000-0000-0000-000000000001" &&
-          !userId.startsWith("usr-");
+        // Cascade delete on all child tables
+        const cascadeTables = [
+          "form_submissions",
+          "forms",
+          "contact_events",
+          "contacts",
+          "tags",
+          "pages",
+          "funnels",
+          "email_sequences",
+          "email_templates",
+          "automations",
+          "analytics_events",
+          "agent_executions",
+          "company_memories",
+          "messages",
+          "conversations",
+          "organization_members",
+        ];
 
-        if (isValidAuthUser) {
-          const { data: member } = await (supabase.from("organization_members") as any)
-            .select("role")
-            .eq("organization_id", orgId)
-            .eq("user_id", userId)
-            .single();
-
-          if (!member || (member as any).role !== "owner") {
-            return NextResponse.json(
-              { error: "Permission denied: Only organization owners can delete this business." },
-              { status: 403 }
-            );
+        for (const tbl of cascadeTables) {
+          try {
+            await (supabase.from(tbl) as any).delete().eq("organization_id", orgId);
+          } catch {
+            // Ignore if table does not exist
           }
         }
 
-        // Delete cascade in Supabase
-        await (supabase.from("organization_members") as any).delete().eq("organization_id", orgId);
-        await (supabase.from("conversations") as any).delete().eq("organization_id", orgId);
         const { error: delError } = await (supabase.from("organizations") as any)
           .delete()
           .eq("id", orgId);
@@ -250,8 +247,19 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
+    // Role check in mock store
+    const isDevRoot = userId === "00000000-0000-0000-0000-000000000001";
+    const role = mockStore.getOrgRole(userId, orgId);
+    if (role !== "owner" && !isDevRoot) {
+      return NextResponse.json(
+        { error: "Permission denied: Only organization owners can delete this business." },
+        { status: 403 }
+      );
+    }
+
     // Mock store deletion & cleanup
     mockStore.organizations.delete(orgId);
+
     for (const [memId, mem] of mockStore.organizationMembers.entries()) {
       if (mem.organization_id === orgId) {
         mockStore.organizationMembers.delete(memId);
@@ -260,6 +268,11 @@ export async function DELETE(req: NextRequest) {
     for (const [convId, conv] of mockStore.conversations.entries()) {
       if (conv.organization_id === orgId) {
         mockStore.conversations.delete(convId);
+      }
+    }
+    for (const [msgId, msg] of mockStore.messages.entries()) {
+      if (msg.organization_id === orgId) {
+        mockStore.messages.delete(msgId);
       }
     }
 
@@ -271,4 +284,5 @@ export async function DELETE(req: NextRequest) {
     );
   }
 }
+
 

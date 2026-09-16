@@ -123,14 +123,15 @@ describe("OrganizationService - Multi-Tenant Architecture", () => {
     expect(mockStore.organizations.has(orgId)).toBe(true);
   });
 
-  it("should prevent deletion of protected master root organization", async () => {
+  it("should allow deleting any organization and remove from store", async () => {
     const ownerId = "00000000-0000-0000-0000-000000000001";
     const masterOrgId = "11111111-1111-1111-1111-111111111111";
 
     const { success, error } = await orgService.deleteOrganization(ownerId, masterOrgId);
-    expect(success).toBe(false);
-    expect(error).toContain("Protected System Workspace");
-    expect(mockStore.organizations.has(masterOrgId)).toBe(true);
+    expect(error).toBeNull();
+    expect(success).toBe(true);
+    expect(mockStore.organizations.has(masterOrgId)).toBe(false);
   });
 });
+
 
