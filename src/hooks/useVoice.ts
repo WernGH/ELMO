@@ -69,8 +69,8 @@ export function useVoice(options: UseVoiceOptions = {}) {
     const unsubState = vs.subscribeState((newState) => {
       setState(newState);
 
-      // If state became speaking or processing, pause ambient wake-word recognition
-      if (newState === "speaking" || newState === "processing") {
+      // If state became listening, speaking, or processing, pause ambient wake-word recognition
+      if (newState === "listening" || newState === "speaking" || newState === "processing") {
         ww.pauseListening();
       } else if (newState === "idle") {
         // Return to ambient wake-word listening if enabled and in voice mode

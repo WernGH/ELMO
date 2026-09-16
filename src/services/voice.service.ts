@@ -236,6 +236,14 @@ export class VoiceService {
     const hasPermission = await this.requestMicrophonePermission();
     if (!hasPermission) return;
 
+    // Abort existing active instance if any to release browser microphone
+    if (this.recognitionInstance) {
+      try {
+        this.recognitionInstance.abort();
+      } catch {}
+      this.recognitionInstance = null;
+    }
+
     this.currentTranscript = "";
     this.setState("listening");
 
@@ -283,8 +291,8 @@ export class VoiceService {
             "mic_permission_denied",
             "Microphone permission was denied by the browser."
           );
-        } else if (errorType === "no-speech") {
-          // User stayed silent; cleanly reset to idle without alert
+        } else if (errorType === "no-speech" || errorType === "aborted") {
+          // User stayed silent or recognition was stopped/preempted; cleanly reset to idle without alert
           this.setState("idle");
         } else if (errorType === "network") {
           this.notifyError(

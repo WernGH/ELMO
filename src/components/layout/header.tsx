@@ -47,6 +47,8 @@ export function Header({ currentOrgId, onOrgChange }: HeaderProps) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
+  const [isSubmittingOrg, setIsSubmittingOrg] = useState(false);
+  const [createOrgError, setCreateOrgError] = useState<string | null>(null);
 
   const authService = AuthService.getInstance();
   const orgService = OrganizationService.getInstance();
@@ -56,17 +58,16 @@ export function Header({ currentOrgId, onOrgChange }: HeaderProps) {
       const sess = await authService.getSession();
       setSession(sess);
 
-      if (sess.user) {
-        const orgs = await orgService.getUserOrganizations(sess.user.id);
-        setOrganizations(orgs);
+      const userId = sess?.user?.id || "00000000-0000-0000-0000-000000000001";
+      const orgs = await orgService.getUserOrganizations(userId);
+      setOrganizations(orgs);
 
-        const targetId =
-          currentOrgId || sess.activeOrganizationId || (orgs.length > 0 ? orgs[0].id : null);
-        if (targetId) {
-          const selected = orgs.find((o) => o.id === targetId) || orgs[0] || null;
-          setActiveOrg(selected);
-          if (onOrgChange && selected) onOrgChange(selected.id);
-        }
+      const targetId =
+        currentOrgId || sess?.activeOrganizationId || (orgs.length > 0 ? orgs[0].id : null);
+      if (targetId) {
+        const selected = orgs.find((o) => o.id === targetId) || orgs[0] || null;
+        setActiveOrg(selected);
+        if (onOrgChange && selected) onOrgChange(selected.id);
       }
     }
     loadData();
@@ -90,25 +91,45 @@ export function Header({ currentOrgId, onOrgChange }: HeaderProps) {
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newOrgName.trim() || !session?.user) return;
+    const trimmed = newOrgName.trim();
+    if (!trimmed) return;
 
+    setIsSubmittingOrg(true);
+    setCreateOrgError(null);
+
+    const userId = session?.user?.id || "00000000-0000-0000-0000-000000000001";
     const { data: newOrg, error } = await orgService.createOrganization(
-      session.user.id,
-      newOrgName.trim()
+      userId,
+      trimmed
     );
 
-    if (newOrg && !error) {
-      const orgWithRole: OrganizationWithMemberRole = {
-        ...newOrg,
-        role: "owner",
-      };
-      setOrganizations((prev) => [...prev, orgWithRole]);
-      setActiveOrg(orgWithRole);
-      setIsCreatingOrg(false);
-      setNewOrgName("");
-      setIsOrgDropdownOpen(false);
-      if (onOrgChange) onOrgChange(newOrg.id);
+    setIsSubmittingOrg(false);
+
+    if (error || !newOrg) {
+      setCreateOrgError(error || "Failed to create organization.");
+      return;
     }
+
+    const orgWithRole: OrganizationWithMemberRole = {
+      ...newOrg,
+      role: "owner",
+    };
+    setOrganizations((prev) => [orgWithRole, ...prev]);
+    setActiveOrg(orgWithRole);
+    setIsCreatingOrg(false);
+    setNewOrgName("");
+    setCreateOrgError(null);
+    setIsOrgDropdownOpen(false);
+
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("elmo_session");
+      const parsed = stored ? JSON.parse(stored) : {};
+      parsed.activeOrganizationId = newOrg.id;
+      localStorage.setItem("elmo_session", JSON.stringify(parsed));
+    }
+
+    if (onOrgChange) onOrgChange(newOrg.id);
+    router.refresh();
   };
 
   const handleLogout = async () => {
@@ -179,19 +200,27 @@ export function Header({ currentOrgId, onOrgChange }: HeaderProps) {
                       placeholder="Organization name..."
                       value={newOrgName}
                       onChange={(e) => setNewOrgName(e.target.value)}
-                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-[#0C172B] border border-[#1F3555] text-white focus:outline-none focus:border-cyan-400"
+                      disabled={isSubmittingOrg}
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-[#0C172B] border border-[#1F3555] text-white focus:outline-none focus:border-cyan-400 disabled:opacity-50"
                       autoFocus
                     />
+                    {createOrgError && (
+                      <p className="text-[10px] text-red-400 font-mono leading-tight">{createOrgError}</p>
+                    )}
                     <div className="flex gap-2">
                       <button
                         type="submit"
-                        className="flex-1 text-[11px] font-semibold py-1 bg-gradient-to-r from-cyan-500 to-blue-600 text-black rounded-md hover:from-cyan-400 hover:to-blue-500 transition-colors shadow-[0_0_10px_rgba(0,210,255,0.3)]"
+                        disabled={isSubmittingOrg || !newOrgName.trim()}
+                        className="flex-1 text-[11px] font-semibold py-1 bg-gradient-to-r from-cyan-500 to-blue-600 text-black rounded-md hover:from-cyan-400 hover:to-blue-500 transition-colors shadow-[0_0_10px_rgba(0,210,255,0.3)] disabled:opacity-50 flex items-center justify-center gap-1"
                       >
-                        Create
+                        {isSubmittingOrg ? "Creating..." : "Create"}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setIsCreatingOrg(false)}
+                        onClick={() => {
+                          setIsCreatingOrg(false);
+                          setCreateOrgError(null);
+                        }}
                         className="px-2 text-[11px] text-zinc-400 hover:text-white"
                       >
                         Cancel

@@ -260,6 +260,13 @@ export class WakeWordService {
 
     this.shouldBeListening = true;
 
+    // Do not start ambient wake-word recognition while VoiceService is actively listening to user speech
+    const voiceService = VoiceService.getInstance();
+    if (voiceService.getState() === "listening") {
+      this.setStatus("paused");
+      return;
+    }
+
     // If an instance is already running, avoid duplicate
     if (this.recognitionInstance) {
       return;
