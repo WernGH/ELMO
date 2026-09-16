@@ -61,6 +61,8 @@ export class VoiceController {
   private conversationId: string | null = null;
 
   private currentTranscript = "";
+  private lastProcessedUtterance = "";
+  private lastProcessedTime = 0;
   private inactivityTimer: NodeJS.Timeout | null = null;
   private utteranceDebounceTimer: NodeJS.Timeout | null = null;
   private isContinuousMode = false;
@@ -134,9 +136,32 @@ export class VoiceController {
     return this.config.lang;
   }
 
+  public updateCallbacks(options: VoiceControllerOptions): void {
+    if (options.onTranscriptUpdate !== undefined) {
+      this.onTranscriptUpdate = options.onTranscriptUpdate;
+    }
+    if (options.onMessageCreated !== undefined) {
+      this.onMessageCreated = options.onMessageCreated;
+    }
+    if (options.organizationId) {
+      this.organizationId = options.organizationId;
+    }
+    if (options.userId) {
+      this.userId = options.userId;
+    }
+    if (options.conversationId !== undefined) {
+      this.conversationId = options.conversationId;
+    }
+    if (options.config) {
+      this.config = { ...this.config, ...options.config };
+    }
+  }
+
   public static getInstance(options?: VoiceControllerOptions): VoiceController {
     if (!VoiceController.instance) {
       VoiceController.instance = new VoiceController(options);
+    } else if (options) {
+      VoiceController.instance.updateCallbacks(options);
     }
     return VoiceController.instance;
   }
@@ -433,12 +458,17 @@ export class VoiceController {
       this.utteranceDebounceTimer = null;
     }
 
+    const currentState = this.stateManager.getState();
+    if (currentState === "PROCESSING" || currentState === "ELMO_SPEAKING") {
+      return;
+    }
+
     let spokenText = (explicitText || this.stt.getTranscript() || this.currentTranscript).trim();
 
     // If text isn't immediately finalized but user was speaking, yield briefly for STT engine
-    if (!spokenText && (this.stateManager.getState() === "USER_SPEAKING" || explicitText === undefined)) {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      spokenText = (this.stt.getTranscript() || this.currentTranscript).trim();
+    if (!spokenText && (currentState === "USER_SPEAKING" || explicitText === undefined)) {
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      spokenText = (explicitText || this.stt.getTranscript() || this.currentTranscript).trim();
     }
 
     if (!spokenText) {
@@ -447,6 +477,16 @@ export class VoiceController {
       this.startInactivityTimer();
       return;
     }
+
+    // Prevent immediate duplicate execution if debounced event fires twice
+    if (
+      spokenText.toLowerCase() === this.lastProcessedUtterance.toLowerCase() &&
+      Date.now() - this.lastProcessedTime < 2500
+    ) {
+      return;
+    }
+    this.lastProcessedUtterance = spokenText;
+    this.lastProcessedTime = Date.now();
 
     // Reset STT buffers for next turn
     this.currentTranscript = "";

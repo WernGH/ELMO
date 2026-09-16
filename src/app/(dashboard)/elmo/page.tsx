@@ -30,6 +30,7 @@ import { AuthService } from "@/services/auth.service";
 import { UserSession } from "@/types/auth.types";
 import { cn } from "@/lib/utils";
 import { useVoice } from "@/hooks/useVoice";
+import { WakeWordService } from "@/services/wake-word.service";
 import { VoiceHUD } from "@/components/voice/VoiceHUD";
 import { VoiceSettingsModal } from "@/components/voice/VoiceSettingsModal";
 import { FullScreenSpeakMode } from "@/components/voice/FullScreenSpeakMode";
@@ -123,6 +124,18 @@ export default function ELMOChatPage() {
       setInputValue(voice.transcript);
     }
   }, [voice.mode, voice.transcript]);
+
+  // When FullScreenSpeakMode (JARVIS mode) opens, cleanly pause background voice & wake word listeners
+  useEffect(() => {
+    if (isFullScreenSpeakOpen) {
+      voice.abortListening();
+      WakeWordService.getInstance().pauseListening();
+    } else {
+      if (voice.voiceSettings.wakeWordDetection) {
+        WakeWordService.getInstance().startListening();
+      }
+    }
+  }, [isFullScreenSpeakOpen, voice]);
 
   const authService = AuthService.getInstance();
 

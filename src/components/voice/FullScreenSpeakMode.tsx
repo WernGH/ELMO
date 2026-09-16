@@ -126,6 +126,25 @@ export function FullScreenSpeakMode({
           ]);
         },
       });
+      // Force update callbacks to guarantee modal binding
+      controller.updateCallbacks({
+        organizationId,
+        userId,
+        onTranscriptUpdate: (text) => {
+          setLiveTranscript(text);
+        },
+        onMessageCreated: (role, content) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role,
+              content,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            },
+          ]);
+        },
+      });
       controllerRef.current = controller;
 
       const audioMgr = controller.getAudioManager();
@@ -165,6 +184,9 @@ export function FullScreenSpeakMode({
       if (unsubState) unsubState();
       if (unsubAudioLevel) unsubAudioLevel();
       if (unsubLang) unsubLang();
+      if (controllerRef.current) {
+        controllerRef.current.stopVoiceMode();
+      }
     };
   }, [isOpen, organizationId, userId]);
 
@@ -241,6 +263,13 @@ export function FullScreenSpeakMode({
   const handleToggleManualMic = async () => {
     if (!controllerRef.current) return;
     await controllerRef.current.toggleManualMicrophone();
+  };
+
+  const handleForceSend = async () => {
+    if (!controllerRef.current || !liveTranscript.trim()) return;
+    const textToSend = liveTranscript.trim();
+    setLiveTranscript("");
+    await controllerRef.current.handleUserUtteranceComplete(textToSend);
   };
 
   const handleSendMessage = async (text: string) => {
@@ -543,6 +572,16 @@ export function FullScreenSpeakMode({
             liveTranscript={liveTranscript}
             lastElmoResponse={lastElmoResponse}
           />
+
+          {liveTranscript.trim().length > 0 && voiceState !== "PROCESSING" && voiceState !== "ELMO_SPEAKING" && (
+            <button
+              onClick={handleForceSend}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-cyan-400 hover:bg-cyan-300 text-black font-mono font-bold text-xs shadow-[0_0_15px_rgba(0,210,255,0.6)] animate-pulse transition-all cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>TRANSMIT DIRECTIVE NOW</span>
+            </button>
+          )}
 
           <ELMOVoiceControls
             voiceState={voiceState}

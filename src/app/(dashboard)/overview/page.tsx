@@ -261,6 +261,14 @@ export default function OverviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // When FullScreenSpeakMode opens, pause overview's inline voice session
+  useEffect(() => {
+    if (isFullScreenSpeakOpen && controllerRef.current) {
+      controllerRef.current.pauseVoiceMode();
+      setIsVoiceActive(false);
+    }
+  }, [isFullScreenSpeakOpen]);
+
   const handleToggleVoiceMode = async () => {
     if (!controllerRef.current) return;
     if (isVoiceActive) {
