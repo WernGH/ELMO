@@ -28,7 +28,12 @@ export interface StructuredOutputOptions<T> {
 
 export class GeminiService {
   private static instance: GeminiService;
-  private readonly defaultModel = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  private readonly defaultModel = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
+  private readonly fallbackModels = [
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-flash-lite-latest",
+  ];
   private readonly defaultTemperature = 0.7;
   private readonly defaultMaxTokens = 2048;
 
@@ -121,15 +126,64 @@ export class GeminiService {
   }
 
   /**
+   * Constructs system instruction with real-world temporal anchor and conversational principles
+   */
+  public getEffectiveSystemInstruction(customInstruction?: string): string {
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const formattedTime = now.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const temporalAnchor =
+      `## 0. CURRENT TEMPORAL ANCHOR & REAL-WORLD CLOCK\n` +
+      `- Today's Current Date: ${formattedDate}\n` +
+      `- Current System Time: ${formattedTime} (ISO: ${now.toISOString()})\n` +
+      `- When asked about today's date, day, month, year, or time, answer directly and accurately using this real-world date.\n\n`;
+
+    const baseSystemInstruction =
+      `${temporalAnchor}` +
+      "You are ELMO, an intelligent conversational AI assistant and organizational intelligence core.\n\n" +
+      "CORE CONVERSATIONAL PRINCIPLES:\n" +
+      "- Understand the user's actual meaning before responding.\n" +
+      "- Respond directly to the user's current message.\n" +
+      "- Consider recent conversation context and maintain continuity throughout the conversation.\n" +
+      "- DO NOT use generic assistant responses when a specific natural response is possible.\n" +
+      "- NEVER repeatedly respond with generic phrases like 'How can I help you?', 'I\\'m here to assist you.', or 'How may I help you today?'.\n" +
+      "- For casual conversation, respond naturally and conversationally.\n" +
+      "- For simple questions, give simple, direct answers.\n" +
+      "- For complex requests, provide appropriate detail.\n" +
+      "- Do not assume every message is a business task. Users may greet you, chat casually, ask questions, joke, discuss personal topics, request information, or ask you to perform tasks.\n" +
+      "- Respond according to the actual intent.\n" +
+      "- Do not repeat the same response unnecessarily.\n\n" +
+      "CRITICAL GLOBAL MULTILINGUAL MANDATE:\n" +
+      "- You MUST respond in the EXACT same language that the user spoke or wrote to you.\n" +
+      "- If the user speaks Spanish, respond in Spanish. If Japanese, respond in Japanese. If Malay, respond in Malay. If Mandarin, respond in Mandarin. If Arabic, respond in Arabic. If Hindi, respond in Hindi. If Indonesian, respond in Indonesian. If French, respond in French. If German, respond in German. If Portuguese, respond in Portuguese. If Russian, respond in Russian. If Korean, respond in Korean.\n" +
+      "- If the user speaks in a code-mixed phrasing (e.g. Manglish, Spanglish, Chinglish), understand their request and respond naturally in that same natural register.\n" +
+      "- NEVER translate the user's inquiry into English before answering.\n" +
+      "- Only switch languages if the user explicitly instructs you to (e.g. 'Answer in Spanish' or 'Switch to English').";
+
+    return customInstruction
+      ? `${baseSystemInstruction}\n\n${customInstruction}`
+      : baseSystemInstruction;
+  }
+
+  /**
    * Send prompts and generate complete responses
    */
   public async generateResponse(options: GenerateOptions): Promise<GeminiResponse> {
     const startTime = Date.now();
     const apiKey = this.getApiKey();
-    const model = options.config?.modelName || process.env.GEMINI_MODEL || this.defaultModel;
+    const requestedModel = options.config?.modelName || process.env.GEMINI_MODEL || this.defaultModel;
 
     this.logInfo("Generating response", {
-      model,
+      model: requestedModel,
       hasApiKey: Boolean(apiKey),
       promptLength: options.prompt.length,
       historyLength: options.history?.length ?? 0,
@@ -140,7 +194,7 @@ export class GeminiService {
       const latencyMs = Date.now() - startTime;
       return {
         text: simulatedText,
-        model: `${model}-executive-fallback`,
+        model: `${requestedModel}-executive-fallback`,
         tokensUsed: {
           promptTokens: Math.ceil(options.prompt.length / 4),
           completionTokens: Math.ceil(simulatedText.length / 4),
@@ -152,7 +206,7 @@ export class GeminiService {
 
     try {
       const contents = this.formatContents(options.prompt, options.history);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const effectiveSystemInstruction = this.getEffectiveSystemInstruction(options.systemInstruction);
 
       const payload: Record<string, unknown> = {
         contents,
@@ -161,83 +215,56 @@ export class GeminiService {
           maxOutputTokens: options.config?.maxOutputTokens ?? this.defaultMaxTokens,
           topP: options.config?.topP ?? 0.95,
         },
+        systemInstruction: {
+          parts: [{ text: effectiveSystemInstruction }],
+        },
       };
 
-      const baseSystemInstruction =
-        "You are ELMO, an intelligent conversational AI assistant and organizational intelligence core.\n\n" +
-        "CORE CONVERSATIONAL PRINCIPLES:\n" +
-        "- Understand the user's actual meaning before responding.\n" +
-        "- Respond directly to the user's current message.\n" +
-        "- Consider recent conversation context and maintain continuity throughout the conversation.\n" +
-        "- DO NOT use generic assistant responses when a specific natural response is possible.\n" +
-        "- NEVER repeatedly respond with generic phrases like 'How can I help you?', 'I\\'m here to assist you.', or 'How may I help you today?'.\n" +
-        "- For casual conversation, respond naturally and conversationally.\n" +
-        "- For simple questions, give simple, direct answers.\n" +
-        "- For complex requests, provide appropriate detail.\n" +
-        "- Do not assume every message is a business task. Users may greet you, chat casually, ask questions, joke, discuss personal topics, request information, or ask you to perform tasks.\n" +
-        "- Respond according to the actual intent.\n" +
-        "- Do not repeat the same response unnecessarily.\n\n" +
-        "CRITICAL GLOBAL MULTILINGUAL MANDATE:\n" +
-        "- You MUST respond in the EXACT same language that the user spoke or wrote to you.\n" +
-        "- If the user speaks Spanish, respond in Spanish. If Japanese, respond in Japanese. If Malay, respond in Malay. If Mandarin, respond in Mandarin. If Arabic, respond in Arabic. If Hindi, respond in Hindi. If Indonesian, respond in Indonesian. If French, respond in French. If German, respond in German. If Portuguese, respond in Portuguese. If Russian, respond in Russian. If Korean, respond in Korean.\n" +
-        "- If the user speaks in a code-mixed phrasing (e.g. Manglish, Spanglish, Chinglish), understand their request and respond naturally in that same natural register.\n" +
-        "- NEVER translate the user's inquiry into English before answering.\n" +
-        "- Only switch languages if the user explicitly instructs you to (e.g. 'Answer in Spanish' or 'Switch to English').";
+      const modelCandidates = Array.from(
+        new Set([requestedModel, ...this.fallbackModels])
+      );
 
-      const effectiveSystemInstruction = options.systemInstruction
-        ? `${baseSystemInstruction}\n\n${options.systemInstruction}`
-        : baseSystemInstruction;
+      let lastErrorText = "";
+      for (const candidateModel of modelCandidates) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidateModel}:generateContent?key=${apiKey}`;
 
-      payload.systemInstruction = {
-        parts: [{ text: effectiveSystemInstruction }],
-      };
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: options.abortSignal,
+          });
 
-      let response: Response | null = null;
-      let errorText = "";
-      const maxRetries = 2;
+          if (response.ok) {
+            const data = await response.json();
+            const text =
+              data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") || "";
+            const latencyMs = Date.now() - startTime;
+            const usage = data.usageMetadata;
+            return {
+              text,
+              model: candidateModel,
+              tokensUsed: usage
+                ? {
+                    promptTokens: usage.promptTokenCount ?? 0,
+                    completionTokens: usage.candidatesTokenCount ?? 0,
+                    totalTokens: usage.totalTokenCount ?? 0,
+                  }
+                : undefined,
+              latencyMs,
+            };
+          }
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: options.abortSignal,
-        });
-
-        if (response.ok) break;
-
-        errorText = await response.text();
-        if ((response.status === 503 || response.status === 429) && attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-          continue;
+          lastErrorText = await response.text();
+          console.warn(`[GeminiService] Model ${candidateModel} failed with status ${response.status}. Trying next candidate...`);
+        } catch (fetchErr: any) {
+          if (options.abortSignal?.aborted) throw fetchErr;
+          lastErrorText = fetchErr.message;
         }
-
-        const safeError = this.sanitizeError(errorText, apiKey);
-        throw new Error(`Gemini API error [${response.status}]: ${safeError}`);
       }
 
-      if (!response || !response.ok) {
-        throw new Error(`Gemini API error: ${this.sanitizeError(errorText, apiKey)}`);
-      }
-
-      const data = await response.json();
-      const text =
-        data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") || "";
-      const latencyMs = Date.now() - startTime;
-
-      const usage = data.usageMetadata;
-      return {
-        text,
-        model,
-        tokensUsed: usage
-          ? {
-              promptTokens: usage.promptTokenCount ?? 0,
-              completionTokens: usage.candidatesTokenCount ?? 0,
-              totalTokens: usage.totalTokenCount ?? 0,
-            }
-          : undefined,
-        latencyMs,
-      };
+      throw new Error(`All Gemini models failed: ${this.sanitizeError(lastErrorText, apiKey)}`);
     } catch (err: unknown) {
       const safeError = this.sanitizeError(err, apiKey);
       this.logError("generateResponse failed", safeError);
@@ -298,7 +325,7 @@ export class GeminiService {
 
     try {
       const contents = this.formatContents(options.prompt, options.history);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+      const effectiveSystemInstruction = this.getEffectiveSystemInstruction(options.systemInstruction);
 
       const payload: Record<string, unknown> = {
         contents,
@@ -307,36 +334,42 @@ export class GeminiService {
           maxOutputTokens: options.config?.maxOutputTokens ?? this.defaultMaxTokens,
           topP: options.config?.topP ?? 0.95,
         },
+        systemInstruction: {
+          parts: [{ text: effectiveSystemInstruction }],
+        },
       };
 
-      if (options.systemInstruction) {
-        payload.systemInstruction = {
-          parts: [{ text: options.systemInstruction }],
-        };
-      }
+      const modelCandidates = Array.from(
+        new Set([model, ...this.fallbackModels])
+      );
 
       let response: Response | null = null;
       let errorText = "";
-      const maxRetries = 2;
+      let successfulModel = model;
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: options.abortSignal,
-        });
+      for (const candidateModel of modelCandidates) {
+        successfulModel = candidateModel;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidateModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-        if (response.ok) break;
+        try {
+          response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: options.abortSignal,
+          });
 
-        errorText = await response.text();
-        if ((response.status === 503 || response.status === 429) && attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-          continue;
+          if (response.ok && response.body) {
+            break;
+          }
+
+          errorText = await response.text();
+          console.warn(`[GeminiService] Model ${candidateModel} stream returned status ${response.status}. Trying fallback candidate...`);
+        } catch (fetchErr: any) {
+          if (options.abortSignal?.aborted) throw fetchErr;
+          errorText = fetchErr.message;
+          console.warn(`[GeminiService] Model ${candidateModel} stream error: ${fetchErr.message}. Trying fallback candidate...`);
         }
-
-        const safeError = this.sanitizeError(errorText, apiKey);
-        throw new Error(`Gemini Stream error [${response.status}]: ${safeError}`);
       }
 
       if (!response || !response.ok) {
@@ -385,7 +418,7 @@ export class GeminiService {
       yield {
         type: "metadata",
         metadata: {
-          model,
+          model: successfulModel,
           latencyMs,
           status: "complete",
         },
@@ -917,6 +950,45 @@ export class GeminiService {
         "- **Cognitive Engine**: Gemini AI Central Brain active.\n\n" +
         "All systems are operational. Awaiting your executive directives."
       );
+    }
+
+    // Date & Time Queries
+    const isDateQuery =
+      /\b(what('?s| is)? (the )?(today('?s)? )?date|what day is it|what is the date|today'?s date|current date|what date is today|what date is it|what is today date|what today date|what date)\b/i.test(p) ||
+      /\b(tarikh (hari ini|sekarang)|hari ini (berapa haribulan|tarikh apa))\b/i.test(p) ||
+      /\b(今天(是)?(几月几号|几号|星期几))\b/i.test(p) ||
+      /\b(fecha de hoy|qué día es hoy)\b/i.test(p);
+
+    if (isDateQuery) {
+      const now = new Date();
+      const enDate = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      if (p.includes("tarikh") || p.includes("haribulan") || p.includes("hari ini")) {
+        return `Hari ini adalah hari ${now.toLocaleDateString("ms-MY", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`;
+      }
+      if (p.includes("今天") || p.includes("几号") || p.includes("星期几")) {
+        return `今天是 ${now.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}。`;
+      }
+      if (p.includes("fecha") || p.includes("día")) {
+        return `Hoy es ${now.toLocaleDateString("es-ES", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}.`;
+      }
+      return `Today is ${enDate}.`;
+    }
+
+    const isTimeQuery =
+      /\b(what('?s| is)? (the )?(current )?time|what time is it|current time|what time is now|what time)\b/i.test(p) ||
+      /\b(pukul berapa|masa sekarang)\b/i.test(p) ||
+      /\b(现在几点)\b/i.test(p);
+
+    if (isTimeQuery) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+      if (p.includes("pukul") || p.includes("masa")) {
+        return `Sekarang menunjukkan pukul ${timeStr}.`;
+      }
+      if (p.includes("几点")) {
+        return `现在时间是 ${timeStr}。`;
+      }
+      return `The current time is ${timeStr}.`;
     }
 
     return (

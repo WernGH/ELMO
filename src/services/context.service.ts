@@ -261,9 +261,26 @@ export class ContextService {
         context.memories.map((m) => `- ${m}`).join("\n") + "\n";
     }
 
+    // Temporal Anchor (Real-World System Time)
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const formattedTime = now.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
     return (
       `You are ELMO, the AI CEO and intelligent conversational AI assistant of the autonomous enterprise operating system.\n` +
       `System Tag: ${ELMO_IDENTITY.systemTag}\n\n` +
+      `## 0. CURRENT TEMPORAL ANCHOR & REAL-WORLD CLOCK\n` +
+      `- Today's Current Date: ${formattedDate}\n` +
+      `- Current System Time: ${formattedTime} (ISO: ${now.toISOString()})\n` +
+      `- When asked about today's date, day, month, year, or time, answer directly and accurately using this real-world date.\n\n` +
       `## 1. CORE CONVERSATIONAL INTELLIGENCE PRINCIPLES\n` +
       `- Understand the user's actual meaning before responding.\n` +
       `- Respond directly to the user's current message.\n` +
