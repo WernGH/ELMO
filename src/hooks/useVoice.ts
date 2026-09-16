@@ -187,6 +187,12 @@ export function useVoice(options: UseVoiceOptions = {}) {
     []
   );
 
+  const waitUntilSpoken = useCallback(async () => {
+    if (voiceServiceRef.current) {
+      await voiceServiceRef.current.waitUntilSpoken();
+    }
+  }, []);
+
   const clearError = useCallback(() => {
     setError(null);
     if (voiceServiceRef.current) {
@@ -236,6 +242,7 @@ export function useVoice(options: UseVoiceOptions = {}) {
     stopListening,
     stopSpeaking,
     speak,
+    waitUntilSpoken,
     // Wake Word & Hands-Free
     wakeWordStatus,
     voiceSettings,

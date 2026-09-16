@@ -26,6 +26,7 @@ export class VoiceService {
   private recognitionInstance: any = null;
   private activeUtteranceQueue: SpeechSynthesisUtterance[] = [];
   private isSynthesizing = false;
+  private lastSpokenText = "";
 
   private config: VoiceConfig = {
     rate: 1.0,
@@ -118,6 +119,31 @@ export class VoiceService {
 
   public getState(): VoiceState {
     return this.state;
+  }
+
+  public getLastSpokenText(): string {
+    return this.lastSpokenText;
+  }
+
+  public isSpeaking(): boolean {
+    return this.state === "speaking" || this.isSynthesizing;
+  }
+
+  /**
+   * Returns a promise that resolves when all queued speech has completely finished playing
+   */
+  public waitUntilSpoken(): Promise<void> {
+    if (this.state !== "speaking" && !this.isSynthesizing) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      const unsub = this.subscribeState((state) => {
+        if (state !== "speaking") {
+          unsub();
+          resolve();
+        }
+      });
+    });
   }
 
   public setState(newState: VoiceState): void {
@@ -452,6 +478,8 @@ export class VoiceService {
       this.setState("idle");
       return;
     }
+
+    this.lastSpokenText = cleanText.toLowerCase().trim();
 
     const sentences = this.splitIntoSentences(cleanText);
     if (sentences.length === 0) {

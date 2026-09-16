@@ -240,6 +240,32 @@ export class WakeWordService {
   }
 
   /**
+   * Filter out speaker bleed or acoustic echo of ELMO's own voice
+   */
+  private isEchoOfLastSpoken(transcript: string): boolean {
+    const lastSpoken = VoiceService.getInstance().getLastSpokenText();
+    if (!lastSpoken || !transcript) return false;
+    const cleanT = transcript.toLowerCase().trim();
+    if (cleanT.length < 3) return false;
+
+    // Direct match or containment
+    if (lastSpoken === cleanT || lastSpoken.includes(cleanT) || cleanT.includes(lastSpoken)) {
+      return true;
+    }
+
+    // Significant token overlap test for 3+ words
+    const words = cleanT.split(/\s+/).filter((w) => w.length > 2);
+    if (words.length >= 3) {
+      const matchCount = words.filter((w) => lastSpoken.includes(w)).length;
+      if (matchCount / words.length >= 0.6) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Starts the lightweight ambient wake-word recognition process
    */
   public async startListening(): Promise<void> {
@@ -288,20 +314,38 @@ export class WakeWordService {
         const voiceService = VoiceService.getInstance();
         const currentVoiceState = voiceService.getState();
 
-        // 1. Interruption Check: If ELMO is currently speaking and user speaks
+        // 1. Interruption Check: While ELMO is speaking, only interrupt on explicit wake word or stop command
         if (currentVoiceState === "speaking") {
-          if (this.settings.interruptElmo) {
+          if (!this.settings.interruptElmo) return;
+
+          let shouldInterrupt = false;
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            const t = event.results[i][0].transcript.toLowerCase().trim();
+            const isStopCommand = /^(stop|pause|wait|quiet|shut up|cancel|hold on)\b/i.test(t);
+            const isWake = this.matchWakeWord(t).detected;
+            if (isStopCommand || isWake) {
+              shouldInterrupt = true;
+              break;
+            }
+          }
+
+          if (shouldInterrupt) {
             voiceService.stopSpeaking();
             voiceService.setState("listening");
             this.startConversationWindow();
-            return;
           }
+          return;
         }
 
         // 2. Extract latest speech fragment
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const res = event.results[i];
           const transcript = res[0].transcript;
+
+          // Acoustic echo filter: Ignore if mic picked up ELMO's recently spoken text
+          if (this.isEchoOfLastSpoken(transcript)) {
+            continue;
+          }
 
           // Check for wake word
           const match = this.matchWakeWord(transcript);

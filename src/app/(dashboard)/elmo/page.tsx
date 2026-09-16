@@ -440,8 +440,17 @@ export default function ELMOChatPage() {
         // Auto-speak response if query was spoken or currently in Voice Mode
         if (fromVoice || voice.mode === "voice") {
           if (voice.voiceSettings.voiceResponse) {
-            voice.speak(fullAssistantText);
             setCurrentlySpeakingMsgId(finalAssistantMsg.id);
+            try {
+              voice.speak(fullAssistantText);
+              await voice.waitUntilSpoken();
+            } catch {
+              // Ignore speak interruptions
+            } finally {
+              setCurrentlySpeakingMsgId(null);
+            }
+            // 400ms cooldown so speaker playback completely dissipates before opening mic
+            await new Promise((resolve) => setTimeout(resolve, 400));
           }
           // Open hands-free conversation window so user can speak follow-ups without repeating wake word
           voice.startConversationWindow(voice.voiceSettings.conversationTimeoutSeconds);
