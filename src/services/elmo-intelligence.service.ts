@@ -23,6 +23,7 @@ import { ElmoFunnelAgentService } from "./elmo-funnel-agent.service";
 import { ElmoOrchestratorService } from "./agentic/elmo-orchestrator.service";
 import { ElmoMemoryService } from "./elmo-memory.service";
 import { LLMProvider, LLMProviderFactory } from "./llm-provider.service";
+import { GeminiService } from "./gemini.service";
 import {
   AIUsageRecord,
   GeminiResponse,
@@ -199,15 +200,16 @@ export class ELMOIntelligenceService {
         trimmedMessage.length > 35
           ? `${trimmedMessage.slice(0, 35)}...`
           : trimmedMessage;
-      const convRes = await this.chatService.createConversation(
-        params.userId,
-        params.organizationId,
-        titleSnippet
-      );
-      if (!convRes.data) {
-        throw new Error(convRes.error || "Failed to initialize executive conversation.");
+      try {
+        const convRes = await this.chatService.createConversation(
+          params.userId,
+          params.organizationId,
+          titleSnippet
+        );
+        convId = convRes?.data?.id || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      } catch {
+        convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       }
-      convId = convRes.data.id;
     }
 
     const inputMode = params.inputMode || "text";
@@ -754,16 +756,16 @@ export class ELMOIntelligenceService {
         trimmedMessage.length > 35
           ? `${trimmedMessage.slice(0, 35)}...`
           : trimmedMessage;
-      const convRes = await this.chatService.createConversation(
-        params.userId,
-        params.organizationId,
-        titleSnippet
-      );
-      if (!convRes.data) {
-        yield { event: "error", data: { error: "Failed to initialize conversation." } };
-        return;
+      try {
+        const convRes = await this.chatService.createConversation(
+          params.userId,
+          params.organizationId,
+          titleSnippet
+        );
+        convId = convRes?.data?.id || `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      } catch {
+        convId = `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       }
-      convId = convRes.data.id;
     }
 
     // Emit active conversation ID event
@@ -1126,7 +1128,22 @@ export class ELMOIntelligenceService {
           metadata = { ...metadata, ...chunk.metadata };
           yield { event: "metadata", data: chunk.metadata };
         } else if (chunk.type === "error") {
-          yield { event: "error", data: { error: chunk.error || "Streaming error." } };
+          console.warn("[ELMOIntelligenceService] Upstream provider error encountered in stream:", chunk.error);
+          if (accumulatedText.trim().length === 0) {
+            const fallbackText = GeminiService.getInstance().generateExecutiveFallbackResponse(
+              trimmedMessage,
+              chatContext.recentMessages
+            );
+            const words = fallbackText.split(/(\s+)/);
+            for (const word of words) {
+              if (params.abortSignal?.aborted) break;
+              accumulatedText += word;
+              yield { event: "token", data: { text: word } };
+              await new Promise((res) => setTimeout(res, 15));
+            }
+          } else {
+            yield { event: "error", data: { error: chunk.error || "Streaming error." } };
+          }
         }
       }
 
