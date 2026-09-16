@@ -17,8 +17,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_org ON public.conversations(organiz
 CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON public.conversations(created_at DESC);
 
 -- Trigger: auto-update conversation timestamp
-CREATE TRIGGER set_conversations_updated_at
-    BEFORE UPDATE ON public.conversations
+DROP TRIGGER IF EXISTS set_conversations_updated_at ON public.conversations;
+CREATE TRIGGER set_conversations_updated_at BEFORE UPDATE ON public.conversations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -49,27 +49,27 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can read its conversations
-CREATE POLICY "conversations_select_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_select_org_members" ON public.conversations;
+CREATE POLICY "conversations_select_org_members" ON public.conversations
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can create conversations
-CREATE POLICY "conversations_insert_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_insert_org_members" ON public.conversations;
+CREATE POLICY "conversations_insert_org_members" ON public.conversations
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- UPDATE: Members of an organization can update conversation titles
-CREATE POLICY "conversations_update_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_update_org_members" ON public.conversations;
+CREATE POLICY "conversations_update_org_members" ON public.conversations
     FOR UPDATE
     USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete conversations
-CREATE POLICY "conversations_delete_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_delete_org_members" ON public.conversations;
+CREATE POLICY "conversations_delete_org_members" ON public.conversations
     FOR DELETE
     USING (public.is_org_member(organization_id));
 
@@ -78,19 +78,19 @@ CREATE POLICY "conversations_delete_org_members"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can read messages in their org
-CREATE POLICY "messages_select_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_select_org_members" ON public.messages;
+CREATE POLICY "messages_select_org_members" ON public.messages
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can insert messages
-CREATE POLICY "messages_insert_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_insert_org_members" ON public.messages;
+CREATE POLICY "messages_insert_org_members" ON public.messages
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete messages
-CREATE POLICY "messages_delete_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_delete_org_members" ON public.messages;
+CREATE POLICY "messages_delete_org_members" ON public.messages
     FOR DELETE
     USING (public.is_org_member(organization_id));

@@ -26,8 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_voice_sessions_user ON public.voice_sessions(user
 CREATE INDEX IF NOT EXISTS idx_voice_sessions_created_at ON public.voice_sessions(created_at DESC);
 
 -- Trigger: auto-update timestamp
-CREATE TRIGGER set_voice_sessions_updated_at
-    BEFORE UPDATE ON public.voice_sessions
+DROP TRIGGER IF EXISTS set_voice_sessions_updated_at ON public.voice_sessions;
+CREATE TRIGGER set_voice_sessions_updated_at BEFORE UPDATE ON public.voice_sessions
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -38,26 +38,26 @@ CREATE TRIGGER set_voice_sessions_updated_at
 ALTER TABLE public.voice_sessions ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: Members of an organization can read voice sessions
-CREATE POLICY "voice_sessions_select_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_select_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_select_org_members" ON public.voice_sessions
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can create voice sessions
-CREATE POLICY "voice_sessions_insert_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_insert_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_insert_org_members" ON public.voice_sessions
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- UPDATE: Members of an organization can update voice sessions
-CREATE POLICY "voice_sessions_update_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_update_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_update_org_members" ON public.voice_sessions
     FOR UPDATE
     USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete voice sessions
-CREATE POLICY "voice_sessions_delete_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_delete_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_delete_org_members" ON public.voice_sessions
     FOR DELETE
     USING (public.is_org_member(organization_id));

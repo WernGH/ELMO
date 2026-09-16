@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS public.funnels (
 CREATE INDEX IF NOT EXISTS idx_funnels_org ON public.funnels(organization_id);
 CREATE INDEX IF NOT EXISTS idx_funnels_status ON public.funnels(status);
 
-CREATE TRIGGER set_funnels_updated_at
-    BEFORE UPDATE ON public.funnels
+DROP TRIGGER IF EXISTS set_funnels_updated_at ON public.funnels;
+CREATE TRIGGER set_funnels_updated_at BEFORE UPDATE ON public.funnels
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -49,8 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_pages_org ON public.pages(organization_id);
 CREATE INDEX IF NOT EXISTS idx_pages_funnel ON public.pages(funnel_id);
 CREATE INDEX IF NOT EXISTS idx_pages_slug ON public.pages(slug);
 
-CREATE TRIGGER set_pages_updated_at
-    BEFORE UPDATE ON public.pages
+DROP TRIGGER IF EXISTS set_pages_updated_at ON public.pages;
+CREATE TRIGGER set_pages_updated_at BEFORE UPDATE ON public.pages
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -71,8 +71,8 @@ CREATE TABLE IF NOT EXISTS public.funnel_steps (
 CREATE INDEX IF NOT EXISTS idx_funnel_steps_funnel ON public.funnel_steps(funnel_id);
 CREATE INDEX IF NOT EXISTS idx_funnel_steps_order ON public.funnel_steps(funnel_id, step_order);
 
-CREATE TRIGGER set_funnel_steps_updated_at
-    BEFORE UPDATE ON public.funnel_steps
+DROP TRIGGER IF EXISTS set_funnel_steps_updated_at ON public.funnel_steps;
+CREATE TRIGGER set_funnel_steps_updated_at BEFORE UPDATE ON public.funnel_steps
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -93,8 +93,8 @@ CREATE TABLE IF NOT EXISTS public.page_sections (
 CREATE INDEX IF NOT EXISTS idx_page_sections_page ON public.page_sections(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_sections_order ON public.page_sections(page_id, order_index);
 
-CREATE TRIGGER set_page_sections_updated_at
-    BEFORE UPDATE ON public.page_sections
+DROP TRIGGER IF EXISTS set_page_sections_updated_at ON public.page_sections;
+CREATE TRIGGER set_page_sections_updated_at BEFORE UPDATE ON public.page_sections
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS public.contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_org ON public.contacts(organization_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_email ON public.contacts(organization_id, email);
 
-CREATE TRIGGER set_contacts_updated_at
-    BEFORE UPDATE ON public.contacts
+DROP TRIGGER IF EXISTS set_contacts_updated_at ON public.contacts;
+CREATE TRIGGER set_contacts_updated_at BEFORE UPDATE ON public.contacts
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -175,8 +175,8 @@ CREATE TABLE IF NOT EXISTS public.forms (
 CREATE INDEX IF NOT EXISTS idx_forms_org ON public.forms(organization_id);
 CREATE INDEX IF NOT EXISTS idx_forms_page ON public.forms(page_id);
 
-CREATE TRIGGER set_forms_updated_at
-    BEFORE UPDATE ON public.forms
+DROP TRIGGER IF EXISTS set_forms_updated_at ON public.forms;
+CREATE TRIGGER set_forms_updated_at BEFORE UPDATE ON public.forms
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -208,8 +208,8 @@ CREATE TABLE IF NOT EXISTS public.email_templates (
 
 CREATE INDEX IF NOT EXISTS idx_email_templates_org ON public.email_templates(organization_id);
 
-CREATE TRIGGER set_email_templates_updated_at
-    BEFORE UPDATE ON public.email_templates
+DROP TRIGGER IF EXISTS set_email_templates_updated_at ON public.email_templates;
+CREATE TRIGGER set_email_templates_updated_at BEFORE UPDATE ON public.email_templates
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -226,8 +226,8 @@ CREATE TABLE IF NOT EXISTS public.email_sequences (
 
 CREATE INDEX IF NOT EXISTS idx_email_sequences_org ON public.email_sequences(organization_id);
 
-CREATE TRIGGER set_email_sequences_updated_at
-    BEFORE UPDATE ON public.email_sequences
+DROP TRIGGER IF EXISTS set_email_sequences_updated_at ON public.email_sequences;
+CREATE TRIGGER set_email_sequences_updated_at BEFORE UPDATE ON public.email_sequences
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -249,8 +249,8 @@ CREATE TABLE IF NOT EXISTS public.email_sequence_steps (
 CREATE INDEX IF NOT EXISTS idx_email_seq_steps_seq ON public.email_sequence_steps(sequence_id);
 CREATE INDEX IF NOT EXISTS idx_email_seq_steps_order ON public.email_sequence_steps(sequence_id, step_order);
 
-CREATE TRIGGER set_email_sequence_steps_updated_at
-    BEFORE UPDATE ON public.email_sequence_steps
+DROP TRIGGER IF EXISTS set_email_sequence_steps_updated_at ON public.email_sequence_steps;
+CREATE TRIGGER set_email_sequence_steps_updated_at BEFORE UPDATE ON public.email_sequence_steps
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -267,8 +267,8 @@ CREATE TABLE IF NOT EXISTS public.automations (
 
 CREATE INDEX IF NOT EXISTS idx_automations_org ON public.automations(organization_id);
 
-CREATE TRIGGER set_automations_updated_at
-    BEFORE UPDATE ON public.automations
+DROP TRIGGER IF EXISTS set_automations_updated_at ON public.automations;
+CREATE TRIGGER set_automations_updated_at BEFORE UPDATE ON public.automations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -348,16 +348,19 @@ ALTER TABLE public.automation_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.analytics_events ENABLE ROW LEVEL SECURITY;
 
 -- Funnels Policies
+DROP POLICY IF EXISTS "funnels_tenant_isolation" ON public.funnels;
 CREATE POLICY "funnels_tenant_isolation" ON public.funnels
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Pages Policies
+DROP POLICY IF EXISTS "pages_tenant_isolation" ON public.pages;
 CREATE POLICY "pages_tenant_isolation" ON public.pages
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Funnel Steps Policies
+DROP POLICY IF EXISTS "funnel_steps_tenant_isolation" ON public.funnel_steps;
 CREATE POLICY "funnel_steps_tenant_isolation" ON public.funnel_steps
     FOR ALL USING (
         EXISTS (
@@ -375,6 +378,7 @@ CREATE POLICY "funnel_steps_tenant_isolation" ON public.funnel_steps
     );
 
 -- Page Sections Policies
+DROP POLICY IF EXISTS "page_sections_tenant_isolation" ON public.page_sections;
 CREATE POLICY "page_sections_tenant_isolation" ON public.page_sections
     FOR ALL USING (
         EXISTS (
@@ -392,16 +396,19 @@ CREATE POLICY "page_sections_tenant_isolation" ON public.page_sections
     );
 
 -- Contacts Policies
+DROP POLICY IF EXISTS "contacts_tenant_isolation" ON public.contacts;
 CREATE POLICY "contacts_tenant_isolation" ON public.contacts
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Tags Policies
+DROP POLICY IF EXISTS "tags_tenant_isolation" ON public.tags;
 CREATE POLICY "tags_tenant_isolation" ON public.tags
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Contact Tags Policies
+DROP POLICY IF EXISTS "contact_tags_tenant_isolation" ON public.contact_tags;
 CREATE POLICY "contact_tags_tenant_isolation" ON public.contact_tags
     FOR ALL USING (
         EXISTS (
@@ -419,31 +426,37 @@ CREATE POLICY "contact_tags_tenant_isolation" ON public.contact_tags
     );
 
 -- Contact Events Policies
+DROP POLICY IF EXISTS "contact_events_tenant_isolation" ON public.contact_events;
 CREATE POLICY "contact_events_tenant_isolation" ON public.contact_events
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Forms Policies
+DROP POLICY IF EXISTS "forms_tenant_isolation" ON public.forms;
 CREATE POLICY "forms_tenant_isolation" ON public.forms
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Form Submissions Policies
+DROP POLICY IF EXISTS "form_submissions_tenant_isolation" ON public.form_submissions;
 CREATE POLICY "form_submissions_tenant_isolation" ON public.form_submissions
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Templates Policies
+DROP POLICY IF EXISTS "email_templates_tenant_isolation" ON public.email_templates;
 CREATE POLICY "email_templates_tenant_isolation" ON public.email_templates
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Sequences Policies
+DROP POLICY IF EXISTS "email_sequences_tenant_isolation" ON public.email_sequences;
 CREATE POLICY "email_sequences_tenant_isolation" ON public.email_sequences
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Sequence Steps Policies
+DROP POLICY IF EXISTS "email_sequence_steps_tenant_isolation" ON public.email_sequence_steps;
 CREATE POLICY "email_sequence_steps_tenant_isolation" ON public.email_sequence_steps
     FOR ALL USING (
         EXISTS (
@@ -461,11 +474,13 @@ CREATE POLICY "email_sequence_steps_tenant_isolation" ON public.email_sequence_s
     );
 
 -- Automations Policies
+DROP POLICY IF EXISTS "automations_tenant_isolation" ON public.automations;
 CREATE POLICY "automations_tenant_isolation" ON public.automations
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Automation Triggers Policies
+DROP POLICY IF EXISTS "automation_triggers_tenant_isolation" ON public.automation_triggers;
 CREATE POLICY "automation_triggers_tenant_isolation" ON public.automation_triggers
     FOR ALL USING (
         EXISTS (
@@ -483,6 +498,7 @@ CREATE POLICY "automation_triggers_tenant_isolation" ON public.automation_trigge
     );
 
 -- Automation Conditions Policies
+DROP POLICY IF EXISTS "automation_conditions_tenant_isolation" ON public.automation_conditions;
 CREATE POLICY "automation_conditions_tenant_isolation" ON public.automation_conditions
     FOR ALL USING (
         EXISTS (
@@ -500,6 +516,7 @@ CREATE POLICY "automation_conditions_tenant_isolation" ON public.automation_cond
     );
 
 -- Automation Actions Policies
+DROP POLICY IF EXISTS "automation_actions_tenant_isolation" ON public.automation_actions;
 CREATE POLICY "automation_actions_tenant_isolation" ON public.automation_actions
     FOR ALL USING (
         EXISTS (
@@ -517,6 +534,7 @@ CREATE POLICY "automation_actions_tenant_isolation" ON public.automation_actions
     );
 
 -- Analytics Events Policies
+DROP POLICY IF EXISTS "analytics_events_tenant_isolation" ON public.analytics_events;
 CREATE POLICY "analytics_events_tenant_isolation" ON public.analytics_events
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));

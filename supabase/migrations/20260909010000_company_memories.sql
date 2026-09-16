@@ -30,8 +30,8 @@ CREATE INDEX IF NOT EXISTS idx_company_memories_scope ON public.company_memories
 -- Row Level Security
 ALTER TABLE public.company_memories ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can query company memories in their organization"
-ON public.company_memories FOR SELECT
+DROP POLICY IF EXISTS "Users can query company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can query company memories in their organization" ON public.company_memories FOR SELECT
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -39,8 +39,8 @@ USING (
     )
 );
 
-CREATE POLICY "Users can insert company memories in their organization"
-ON public.company_memories FOR INSERT
+DROP POLICY IF EXISTS "Users can insert company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can insert company memories in their organization" ON public.company_memories FOR INSERT
 WITH CHECK (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -48,8 +48,8 @@ WITH CHECK (
     )
 );
 
-CREATE POLICY "Users can update company memories in their organization"
-ON public.company_memories FOR UPDATE
+DROP POLICY IF EXISTS "Users can update company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can update company memories in their organization" ON public.company_memories FOR UPDATE
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -57,8 +57,8 @@ USING (
     )
 );
 
-CREATE POLICY "Users can delete company memories in their organization"
-ON public.company_memories FOR DELETE
+DROP POLICY IF EXISTS "Users can delete company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can delete company memories in their organization" ON public.company_memories FOR DELETE
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members

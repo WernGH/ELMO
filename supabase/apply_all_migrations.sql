@@ -65,13 +65,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER set_organizations_updated_at
-    BEFORE UPDATE ON public.organizations
+DROP TRIGGER IF EXISTS set_organizations_updated_at ON public.organizations;
+CREATE TRIGGER set_organizations_updated_at BEFORE UPDATE ON public.organizations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
-CREATE TRIGGER set_profiles_updated_at
-    BEFORE UPDATE ON public.profiles
+DROP TRIGGER IF EXISTS set_profiles_updated_at ON public.profiles;
+CREATE TRIGGER set_profiles_updated_at BEFORE UPDATE ON public.profiles
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -143,27 +143,27 @@ ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Users can only see organizations they belong to
-CREATE POLICY "org_select_members_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_select_members_only" ON public.organizations;
+CREATE POLICY "org_select_members_only" ON public.organizations
     FOR SELECT
     USING (public.is_org_member(id));
 
 -- INSERT: Authenticated users can create new organizations
-CREATE POLICY "org_insert_authenticated"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_insert_authenticated" ON public.organizations;
+CREATE POLICY "org_insert_authenticated" ON public.organizations
     FOR INSERT
     WITH CHECK (auth.uid() IS NOT NULL);
 
 -- UPDATE: Only 'owner' or 'admin' can update organization settings/name
-CREATE POLICY "org_update_owner_admin_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_update_owner_admin_only" ON public.organizations;
+CREATE POLICY "org_update_owner_admin_only" ON public.organizations
     FOR UPDATE
     USING (public.get_org_role(id) IN ('owner', 'admin'))
     WITH CHECK (public.get_org_role(id) IN ('owner', 'admin'));
 
 -- DELETE: Only 'owner' can delete the organization
-CREATE POLICY "org_delete_owner_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_delete_owner_only" ON public.organizations;
+CREATE POLICY "org_delete_owner_only" ON public.organizations
     FOR DELETE
     USING (public.get_org_role(id) = 'owner');
 
@@ -172,16 +172,16 @@ CREATE POLICY "org_delete_owner_only"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can view its roster
-CREATE POLICY "org_members_select_peer_members"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_select_peer_members" ON public.organization_members;
+CREATE POLICY "org_members_select_peer_members" ON public.organization_members
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Allowed if:
 -- 1. Caller is 'owner' or 'admin' in this organization, OR
 -- 2. Organization has no members yet and caller is adding themselves (initial organization setup)
-CREATE POLICY "org_members_insert_authorized"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_insert_authorized" ON public.organization_members;
+CREATE POLICY "org_members_insert_authorized" ON public.organization_members
     FOR INSERT
     WITH CHECK (
         (public.get_org_role(organization_id) IN ('owner', 'admin'))
@@ -196,15 +196,15 @@ CREATE POLICY "org_members_insert_authorized"
     );
 
 -- UPDATE: Only 'owner' or 'admin' can modify member roles
-CREATE POLICY "org_members_update_owner_admin_only"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_update_owner_admin_only" ON public.organization_members;
+CREATE POLICY "org_members_update_owner_admin_only" ON public.organization_members
     FOR UPDATE
     USING (public.get_org_role(organization_id) IN ('owner', 'admin'))
     WITH CHECK (public.get_org_role(organization_id) IN ('owner', 'admin'));
 
 -- DELETE: Owner/Admin can remove members, or members can remove themselves (leave org)
-CREATE POLICY "org_members_delete_authorized"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_delete_authorized" ON public.organization_members;
+CREATE POLICY "org_members_delete_authorized" ON public.organization_members
     FOR DELETE
     USING (
         public.get_org_role(organization_id) IN ('owner', 'admin')
@@ -216,8 +216,8 @@ CREATE POLICY "org_members_delete_authorized"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Users can read their own profile, or profiles of members sharing an organization
-CREATE POLICY "profiles_select_shared_org_or_self"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_select_shared_org_or_self" ON public.profiles;
+CREATE POLICY "profiles_select_shared_org_or_self" ON public.profiles
     FOR SELECT
     USING (
         user_id = auth.uid()
@@ -232,14 +232,14 @@ CREATE POLICY "profiles_select_shared_org_or_self"
     );
 
 -- INSERT: Users can only insert their own profile
-CREATE POLICY "profiles_insert_own_only"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_insert_own_only" ON public.profiles;
+CREATE POLICY "profiles_insert_own_only" ON public.profiles
     FOR INSERT
     WITH CHECK (user_id = auth.uid());
 
 -- UPDATE: Users can only update their own profile
-CREATE POLICY "profiles_update_own_only"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_update_own_only" ON public.profiles;
+CREATE POLICY "profiles_update_own_only" ON public.profiles
     FOR UPDATE
     USING (user_id = auth.uid())
     WITH CHECK (user_id = auth.uid());
@@ -265,8 +265,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_org ON public.conversations(organiz
 CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON public.conversations(created_at DESC);
 
 -- Trigger: auto-update conversation timestamp
-CREATE TRIGGER set_conversations_updated_at
-    BEFORE UPDATE ON public.conversations
+DROP TRIGGER IF EXISTS set_conversations_updated_at ON public.conversations;
+CREATE TRIGGER set_conversations_updated_at BEFORE UPDATE ON public.conversations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -297,27 +297,27 @@ ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can read its conversations
-CREATE POLICY "conversations_select_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_select_org_members" ON public.conversations;
+CREATE POLICY "conversations_select_org_members" ON public.conversations
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can create conversations
-CREATE POLICY "conversations_insert_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_insert_org_members" ON public.conversations;
+CREATE POLICY "conversations_insert_org_members" ON public.conversations
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- UPDATE: Members of an organization can update conversation titles
-CREATE POLICY "conversations_update_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_update_org_members" ON public.conversations;
+CREATE POLICY "conversations_update_org_members" ON public.conversations
     FOR UPDATE
     USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete conversations
-CREATE POLICY "conversations_delete_org_members"
-    ON public.conversations
+DROP POLICY IF EXISTS "conversations_delete_org_members" ON public.conversations;
+CREATE POLICY "conversations_delete_org_members" ON public.conversations
     FOR DELETE
     USING (public.is_org_member(organization_id));
 
@@ -326,20 +326,20 @@ CREATE POLICY "conversations_delete_org_members"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can read messages in their org
-CREATE POLICY "messages_select_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_select_org_members" ON public.messages;
+CREATE POLICY "messages_select_org_members" ON public.messages
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can insert messages
-CREATE POLICY "messages_insert_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_insert_org_members" ON public.messages;
+CREATE POLICY "messages_insert_org_members" ON public.messages
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete messages
-CREATE POLICY "messages_delete_org_members"
-    ON public.messages
+DROP POLICY IF EXISTS "messages_delete_org_members" ON public.messages;
+CREATE POLICY "messages_delete_org_members" ON public.messages
     FOR DELETE
     USING (public.is_org_member(organization_id));
 
@@ -373,8 +373,8 @@ CREATE INDEX IF NOT EXISTS idx_voice_sessions_user ON public.voice_sessions(user
 CREATE INDEX IF NOT EXISTS idx_voice_sessions_created_at ON public.voice_sessions(created_at DESC);
 
 -- Trigger: auto-update timestamp
-CREATE TRIGGER set_voice_sessions_updated_at
-    BEFORE UPDATE ON public.voice_sessions
+DROP TRIGGER IF EXISTS set_voice_sessions_updated_at ON public.voice_sessions;
+CREATE TRIGGER set_voice_sessions_updated_at BEFORE UPDATE ON public.voice_sessions
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -385,27 +385,27 @@ CREATE TRIGGER set_voice_sessions_updated_at
 ALTER TABLE public.voice_sessions ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: Members of an organization can read voice sessions
-CREATE POLICY "voice_sessions_select_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_select_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_select_org_members" ON public.voice_sessions
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can create voice sessions
-CREATE POLICY "voice_sessions_insert_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_insert_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_insert_org_members" ON public.voice_sessions
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- UPDATE: Members of an organization can update voice sessions
-CREATE POLICY "voice_sessions_update_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_update_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_update_org_members" ON public.voice_sessions
     FOR UPDATE
     USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete voice sessions
-CREATE POLICY "voice_sessions_delete_org_members"
-    ON public.voice_sessions
+DROP POLICY IF EXISTS "voice_sessions_delete_org_members" ON public.voice_sessions;
+CREATE POLICY "voice_sessions_delete_org_members" ON public.voice_sessions
     FOR DELETE
     USING (public.is_org_member(organization_id));
 
@@ -437,8 +437,8 @@ CREATE TABLE IF NOT EXISTS public.funnels (
 CREATE INDEX IF NOT EXISTS idx_funnels_org ON public.funnels(organization_id);
 CREATE INDEX IF NOT EXISTS idx_funnels_status ON public.funnels(status);
 
-CREATE TRIGGER set_funnels_updated_at
-    BEFORE UPDATE ON public.funnels
+DROP TRIGGER IF EXISTS set_funnels_updated_at ON public.funnels;
+CREATE TRIGGER set_funnels_updated_at BEFORE UPDATE ON public.funnels
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -462,8 +462,8 @@ CREATE INDEX IF NOT EXISTS idx_pages_org ON public.pages(organization_id);
 CREATE INDEX IF NOT EXISTS idx_pages_funnel ON public.pages(funnel_id);
 CREATE INDEX IF NOT EXISTS idx_pages_slug ON public.pages(slug);
 
-CREATE TRIGGER set_pages_updated_at
-    BEFORE UPDATE ON public.pages
+DROP TRIGGER IF EXISTS set_pages_updated_at ON public.pages;
+CREATE TRIGGER set_pages_updated_at BEFORE UPDATE ON public.pages
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -484,8 +484,8 @@ CREATE TABLE IF NOT EXISTS public.funnel_steps (
 CREATE INDEX IF NOT EXISTS idx_funnel_steps_funnel ON public.funnel_steps(funnel_id);
 CREATE INDEX IF NOT EXISTS idx_funnel_steps_order ON public.funnel_steps(funnel_id, step_order);
 
-CREATE TRIGGER set_funnel_steps_updated_at
-    BEFORE UPDATE ON public.funnel_steps
+DROP TRIGGER IF EXISTS set_funnel_steps_updated_at ON public.funnel_steps;
+CREATE TRIGGER set_funnel_steps_updated_at BEFORE UPDATE ON public.funnel_steps
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -506,8 +506,8 @@ CREATE TABLE IF NOT EXISTS public.page_sections (
 CREATE INDEX IF NOT EXISTS idx_page_sections_page ON public.page_sections(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_sections_order ON public.page_sections(page_id, order_index);
 
-CREATE TRIGGER set_page_sections_updated_at
-    BEFORE UPDATE ON public.page_sections
+DROP TRIGGER IF EXISTS set_page_sections_updated_at ON public.page_sections;
+CREATE TRIGGER set_page_sections_updated_at BEFORE UPDATE ON public.page_sections
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -529,8 +529,8 @@ CREATE TABLE IF NOT EXISTS public.contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_org ON public.contacts(organization_id);
 CREATE INDEX IF NOT EXISTS idx_contacts_email ON public.contacts(organization_id, email);
 
-CREATE TRIGGER set_contacts_updated_at
-    BEFORE UPDATE ON public.contacts
+DROP TRIGGER IF EXISTS set_contacts_updated_at ON public.contacts;
+CREATE TRIGGER set_contacts_updated_at BEFORE UPDATE ON public.contacts
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -588,8 +588,8 @@ CREATE TABLE IF NOT EXISTS public.forms (
 CREATE INDEX IF NOT EXISTS idx_forms_org ON public.forms(organization_id);
 CREATE INDEX IF NOT EXISTS idx_forms_page ON public.forms(page_id);
 
-CREATE TRIGGER set_forms_updated_at
-    BEFORE UPDATE ON public.forms
+DROP TRIGGER IF EXISTS set_forms_updated_at ON public.forms;
+CREATE TRIGGER set_forms_updated_at BEFORE UPDATE ON public.forms
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -621,8 +621,8 @@ CREATE TABLE IF NOT EXISTS public.email_templates (
 
 CREATE INDEX IF NOT EXISTS idx_email_templates_org ON public.email_templates(organization_id);
 
-CREATE TRIGGER set_email_templates_updated_at
-    BEFORE UPDATE ON public.email_templates
+DROP TRIGGER IF EXISTS set_email_templates_updated_at ON public.email_templates;
+CREATE TRIGGER set_email_templates_updated_at BEFORE UPDATE ON public.email_templates
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -639,8 +639,8 @@ CREATE TABLE IF NOT EXISTS public.email_sequences (
 
 CREATE INDEX IF NOT EXISTS idx_email_sequences_org ON public.email_sequences(organization_id);
 
-CREATE TRIGGER set_email_sequences_updated_at
-    BEFORE UPDATE ON public.email_sequences
+DROP TRIGGER IF EXISTS set_email_sequences_updated_at ON public.email_sequences;
+CREATE TRIGGER set_email_sequences_updated_at BEFORE UPDATE ON public.email_sequences
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -662,8 +662,8 @@ CREATE TABLE IF NOT EXISTS public.email_sequence_steps (
 CREATE INDEX IF NOT EXISTS idx_email_seq_steps_seq ON public.email_sequence_steps(sequence_id);
 CREATE INDEX IF NOT EXISTS idx_email_seq_steps_order ON public.email_sequence_steps(sequence_id, step_order);
 
-CREATE TRIGGER set_email_sequence_steps_updated_at
-    BEFORE UPDATE ON public.email_sequence_steps
+DROP TRIGGER IF EXISTS set_email_sequence_steps_updated_at ON public.email_sequence_steps;
+CREATE TRIGGER set_email_sequence_steps_updated_at BEFORE UPDATE ON public.email_sequence_steps
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -680,8 +680,8 @@ CREATE TABLE IF NOT EXISTS public.automations (
 
 CREATE INDEX IF NOT EXISTS idx_automations_org ON public.automations(organization_id);
 
-CREATE TRIGGER set_automations_updated_at
-    BEFORE UPDATE ON public.automations
+DROP TRIGGER IF EXISTS set_automations_updated_at ON public.automations;
+CREATE TRIGGER set_automations_updated_at BEFORE UPDATE ON public.automations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -761,16 +761,19 @@ ALTER TABLE public.automation_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.analytics_events ENABLE ROW LEVEL SECURITY;
 
 -- Funnels Policies
+DROP POLICY IF EXISTS "funnels_tenant_isolation" ON public.funnels;
 CREATE POLICY "funnels_tenant_isolation" ON public.funnels
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Pages Policies
+DROP POLICY IF EXISTS "pages_tenant_isolation" ON public.pages;
 CREATE POLICY "pages_tenant_isolation" ON public.pages
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Funnel Steps Policies
+DROP POLICY IF EXISTS "funnel_steps_tenant_isolation" ON public.funnel_steps;
 CREATE POLICY "funnel_steps_tenant_isolation" ON public.funnel_steps
     FOR ALL USING (
         EXISTS (
@@ -788,6 +791,7 @@ CREATE POLICY "funnel_steps_tenant_isolation" ON public.funnel_steps
     );
 
 -- Page Sections Policies
+DROP POLICY IF EXISTS "page_sections_tenant_isolation" ON public.page_sections;
 CREATE POLICY "page_sections_tenant_isolation" ON public.page_sections
     FOR ALL USING (
         EXISTS (
@@ -805,16 +809,19 @@ CREATE POLICY "page_sections_tenant_isolation" ON public.page_sections
     );
 
 -- Contacts Policies
+DROP POLICY IF EXISTS "contacts_tenant_isolation" ON public.contacts;
 CREATE POLICY "contacts_tenant_isolation" ON public.contacts
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Tags Policies
+DROP POLICY IF EXISTS "tags_tenant_isolation" ON public.tags;
 CREATE POLICY "tags_tenant_isolation" ON public.tags
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Contact Tags Policies
+DROP POLICY IF EXISTS "contact_tags_tenant_isolation" ON public.contact_tags;
 CREATE POLICY "contact_tags_tenant_isolation" ON public.contact_tags
     FOR ALL USING (
         EXISTS (
@@ -832,31 +839,37 @@ CREATE POLICY "contact_tags_tenant_isolation" ON public.contact_tags
     );
 
 -- Contact Events Policies
+DROP POLICY IF EXISTS "contact_events_tenant_isolation" ON public.contact_events;
 CREATE POLICY "contact_events_tenant_isolation" ON public.contact_events
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Forms Policies
+DROP POLICY IF EXISTS "forms_tenant_isolation" ON public.forms;
 CREATE POLICY "forms_tenant_isolation" ON public.forms
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Form Submissions Policies
+DROP POLICY IF EXISTS "form_submissions_tenant_isolation" ON public.form_submissions;
 CREATE POLICY "form_submissions_tenant_isolation" ON public.form_submissions
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Templates Policies
+DROP POLICY IF EXISTS "email_templates_tenant_isolation" ON public.email_templates;
 CREATE POLICY "email_templates_tenant_isolation" ON public.email_templates
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Sequences Policies
+DROP POLICY IF EXISTS "email_sequences_tenant_isolation" ON public.email_sequences;
 CREATE POLICY "email_sequences_tenant_isolation" ON public.email_sequences
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Email Sequence Steps Policies
+DROP POLICY IF EXISTS "email_sequence_steps_tenant_isolation" ON public.email_sequence_steps;
 CREATE POLICY "email_sequence_steps_tenant_isolation" ON public.email_sequence_steps
     FOR ALL USING (
         EXISTS (
@@ -874,11 +887,13 @@ CREATE POLICY "email_sequence_steps_tenant_isolation" ON public.email_sequence_s
     );
 
 -- Automations Policies
+DROP POLICY IF EXISTS "automations_tenant_isolation" ON public.automations;
 CREATE POLICY "automations_tenant_isolation" ON public.automations
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- Automation Triggers Policies
+DROP POLICY IF EXISTS "automation_triggers_tenant_isolation" ON public.automation_triggers;
 CREATE POLICY "automation_triggers_tenant_isolation" ON public.automation_triggers
     FOR ALL USING (
         EXISTS (
@@ -896,6 +911,7 @@ CREATE POLICY "automation_triggers_tenant_isolation" ON public.automation_trigge
     );
 
 -- Automation Conditions Policies
+DROP POLICY IF EXISTS "automation_conditions_tenant_isolation" ON public.automation_conditions;
 CREATE POLICY "automation_conditions_tenant_isolation" ON public.automation_conditions
     FOR ALL USING (
         EXISTS (
@@ -913,6 +929,7 @@ CREATE POLICY "automation_conditions_tenant_isolation" ON public.automation_cond
     );
 
 -- Automation Actions Policies
+DROP POLICY IF EXISTS "automation_actions_tenant_isolation" ON public.automation_actions;
 CREATE POLICY "automation_actions_tenant_isolation" ON public.automation_actions
     FOR ALL USING (
         EXISTS (
@@ -930,6 +947,7 @@ CREATE POLICY "automation_actions_tenant_isolation" ON public.automation_actions
     );
 
 -- Analytics Events Policies
+DROP POLICY IF EXISTS "analytics_events_tenant_isolation" ON public.analytics_events;
 CREATE POLICY "analytics_events_tenant_isolation" ON public.analytics_events
     FOR ALL USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
@@ -968,8 +986,8 @@ CREATE INDEX IF NOT EXISTS idx_company_memories_scope ON public.company_memories
 -- Row Level Security
 ALTER TABLE public.company_memories ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can query company memories in their organization"
-ON public.company_memories FOR SELECT
+DROP POLICY IF EXISTS "Users can query company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can query company memories in their organization" ON public.company_memories FOR SELECT
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -977,8 +995,8 @@ USING (
     )
 );
 
-CREATE POLICY "Users can insert company memories in their organization"
-ON public.company_memories FOR INSERT
+DROP POLICY IF EXISTS "Users can insert company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can insert company memories in their organization" ON public.company_memories FOR INSERT
 WITH CHECK (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -986,8 +1004,8 @@ WITH CHECK (
     )
 );
 
-CREATE POLICY "Users can update company memories in their organization"
-ON public.company_memories FOR UPDATE
+DROP POLICY IF EXISTS "Users can update company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can update company memories in their organization" ON public.company_memories FOR UPDATE
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -995,8 +1013,8 @@ USING (
     )
 );
 
-CREATE POLICY "Users can delete company memories in their organization"
-ON public.company_memories FOR DELETE
+DROP POLICY IF EXISTS "Users can delete company memories in their organization" ON public.company_memories;
+CREATE POLICY "Users can delete company memories in their organization" ON public.company_memories FOR DELETE
 USING (
     organization_id IN (
         SELECT organization_id FROM public.organization_members
@@ -1130,42 +1148,27 @@ CREATE INDEX IF NOT EXISTS idx_agent_executions_started_at ON public.agent_execu
 ALTER TABLE public.agent_executions ENABLE ROW LEVEL SECURITY;
 
 -- SELECT: Members of an organization can view its agent executions
-CREATE POLICY "agent_executions_select_org_members"
-    ON public.agent_executions
+DROP POLICY IF EXISTS "agent_executions_select_org_members" ON public.agent_executions;
+CREATE POLICY "agent_executions_select_org_members" ON public.agent_executions
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Members of an organization can record agent executions
-CREATE POLICY "agent_executions_insert_org_members"
-    ON public.agent_executions
+DROP POLICY IF EXISTS "agent_executions_insert_org_members" ON public.agent_executions;
+CREATE POLICY "agent_executions_insert_org_members" ON public.agent_executions
     FOR INSERT
     WITH CHECK (public.is_org_member(organization_id));
 
 -- UPDATE: Members of an organization can update agent executions
-CREATE POLICY "agent_executions_update_org_members"
-    ON public.agent_executions
+DROP POLICY IF EXISTS "agent_executions_update_org_members" ON public.agent_executions;
+CREATE POLICY "agent_executions_update_org_members" ON public.agent_executions
     FOR UPDATE
     USING (public.is_org_member(organization_id))
     WITH CHECK (public.is_org_member(organization_id));
 
 -- DELETE: Members of an organization can delete agent executions
-CREATE POLICY "agent_executions_delete_org_members"
-    ON public.agent_executions
+DROP POLICY IF EXISTS "agent_executions_delete_org_members" ON public.agent_executions;
+CREATE POLICY "agent_executions_delete_org_members" ON public.agent_executions
     FOR DELETE
     USING (public.is_org_member(organization_id));
-
-
--- >>> STARTER SEED DATA <<<
--- ==============================================================================
--- ELMO Phase 1 Seed Data
--- ==============================================================================
-
--- Sample organization
-INSERT INTO public.organizations (id, name, slug, settings)
-VALUES (
-    '00000000-0000-0000-0000-000000000001',
-    'Acme AI Dynamics',
-    'acme-ai-dynamics',
-    '{"theme": "dark", "elmo_status": "active", "autonomy_level": "supervised"}'::jsonb
-) ON CONFLICT (id) DO NOTHING;
 

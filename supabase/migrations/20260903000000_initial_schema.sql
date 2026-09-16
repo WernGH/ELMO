@@ -59,13 +59,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER set_organizations_updated_at
-    BEFORE UPDATE ON public.organizations
+DROP TRIGGER IF EXISTS set_organizations_updated_at ON public.organizations;
+CREATE TRIGGER set_organizations_updated_at BEFORE UPDATE ON public.organizations
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
-CREATE TRIGGER set_profiles_updated_at
-    BEFORE UPDATE ON public.profiles
+DROP TRIGGER IF EXISTS set_profiles_updated_at ON public.profiles;
+CREATE TRIGGER set_profiles_updated_at BEFORE UPDATE ON public.profiles
     FOR EACH ROW
     EXECUTE FUNCTION public.set_updated_at();
 
@@ -137,27 +137,27 @@ ALTER TABLE public.organization_members ENABLE ROW LEVEL SECURITY;
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Users can only see organizations they belong to
-CREATE POLICY "org_select_members_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_select_members_only" ON public.organizations;
+CREATE POLICY "org_select_members_only" ON public.organizations
     FOR SELECT
     USING (public.is_org_member(id));
 
 -- INSERT: Authenticated users can create new organizations
-CREATE POLICY "org_insert_authenticated"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_insert_authenticated" ON public.organizations;
+CREATE POLICY "org_insert_authenticated" ON public.organizations
     FOR INSERT
     WITH CHECK (auth.uid() IS NOT NULL);
 
 -- UPDATE: Only 'owner' or 'admin' can update organization settings/name
-CREATE POLICY "org_update_owner_admin_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_update_owner_admin_only" ON public.organizations;
+CREATE POLICY "org_update_owner_admin_only" ON public.organizations
     FOR UPDATE
     USING (public.get_org_role(id) IN ('owner', 'admin'))
     WITH CHECK (public.get_org_role(id) IN ('owner', 'admin'));
 
 -- DELETE: Only 'owner' can delete the organization
-CREATE POLICY "org_delete_owner_only"
-    ON public.organizations
+DROP POLICY IF EXISTS "org_delete_owner_only" ON public.organizations;
+CREATE POLICY "org_delete_owner_only" ON public.organizations
     FOR DELETE
     USING (public.get_org_role(id) = 'owner');
 
@@ -166,16 +166,16 @@ CREATE POLICY "org_delete_owner_only"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Members of an organization can view its roster
-CREATE POLICY "org_members_select_peer_members"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_select_peer_members" ON public.organization_members;
+CREATE POLICY "org_members_select_peer_members" ON public.organization_members
     FOR SELECT
     USING (public.is_org_member(organization_id));
 
 -- INSERT: Allowed if:
 -- 1. Caller is 'owner' or 'admin' in this organization, OR
 -- 2. Organization has no members yet and caller is adding themselves (initial organization setup)
-CREATE POLICY "org_members_insert_authorized"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_insert_authorized" ON public.organization_members;
+CREATE POLICY "org_members_insert_authorized" ON public.organization_members
     FOR INSERT
     WITH CHECK (
         (public.get_org_role(organization_id) IN ('owner', 'admin'))
@@ -190,15 +190,15 @@ CREATE POLICY "org_members_insert_authorized"
     );
 
 -- UPDATE: Only 'owner' or 'admin' can modify member roles
-CREATE POLICY "org_members_update_owner_admin_only"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_update_owner_admin_only" ON public.organization_members;
+CREATE POLICY "org_members_update_owner_admin_only" ON public.organization_members
     FOR UPDATE
     USING (public.get_org_role(organization_id) IN ('owner', 'admin'))
     WITH CHECK (public.get_org_role(organization_id) IN ('owner', 'admin'));
 
 -- DELETE: Owner/Admin can remove members, or members can remove themselves (leave org)
-CREATE POLICY "org_members_delete_authorized"
-    ON public.organization_members
+DROP POLICY IF EXISTS "org_members_delete_authorized" ON public.organization_members;
+CREATE POLICY "org_members_delete_authorized" ON public.organization_members
     FOR DELETE
     USING (
         public.get_org_role(organization_id) IN ('owner', 'admin')
@@ -210,8 +210,8 @@ CREATE POLICY "org_members_delete_authorized"
 -- ------------------------------------------------------------------------------
 
 -- SELECT: Users can read their own profile, or profiles of members sharing an organization
-CREATE POLICY "profiles_select_shared_org_or_self"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_select_shared_org_or_self" ON public.profiles;
+CREATE POLICY "profiles_select_shared_org_or_self" ON public.profiles
     FOR SELECT
     USING (
         user_id = auth.uid()
@@ -226,14 +226,14 @@ CREATE POLICY "profiles_select_shared_org_or_self"
     );
 
 -- INSERT: Users can only insert their own profile
-CREATE POLICY "profiles_insert_own_only"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_insert_own_only" ON public.profiles;
+CREATE POLICY "profiles_insert_own_only" ON public.profiles
     FOR INSERT
     WITH CHECK (user_id = auth.uid());
 
 -- UPDATE: Users can only update their own profile
-CREATE POLICY "profiles_update_own_only"
-    ON public.profiles
+DROP POLICY IF EXISTS "profiles_update_own_only" ON public.profiles;
+CREATE POLICY "profiles_update_own_only" ON public.profiles
     FOR UPDATE
     USING (user_id = auth.uid())
     WITH CHECK (user_id = auth.uid());
