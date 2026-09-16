@@ -28,6 +28,11 @@ export class VoiceService {
   private isSynthesizing = false;
   private lastSpokenText = "";
 
+  // Network retry and auto-recovery state
+  private networkRetryCount = 0;
+  private networkRetryTimeout: any = null;
+  private isAutoRecovering = false;
+
   private config: VoiceConfig = {
     rate: 1.0,
     pitch: 1.0,
@@ -52,6 +57,25 @@ export class VoiceService {
     } catch {
       // Graceful fallback for non-configured or minimal environments
     }
+  }
+
+  /**
+   * Resolves a guaranteed valid BCP-47 language tag (e.g. en-US, ms-MY)
+   * Prevents invalid 'auto' or 'unknown' strings from crashing Chrome's Web Speech API with 'network' error.
+   */
+  public getValidBcp47Lang(): string {
+    const raw = this.config.lang;
+    if (!raw || raw === "auto" || raw === "mixed" || raw === "unknown") {
+      if (typeof window !== "undefined" && window.navigator?.language) {
+        return window.navigator.language;
+      }
+      return "en-US";
+    }
+    const resolved = LanguageContextService.getBcp47Tag(raw);
+    if (!resolved || resolved.toLowerCase().includes("auto")) {
+      return (typeof window !== "undefined" && window.navigator?.language) || "en-US";
+    }
+    return resolved;
   }
 
   public setLanguage(lang: string): void {
@@ -87,6 +111,10 @@ export class VoiceService {
    */
   public static resetInstance(): void {
     if (VoiceService.instance) {
+      if (VoiceService.instance.networkRetryTimeout) {
+        clearTimeout(VoiceService.instance.networkRetryTimeout);
+        VoiceService.instance.networkRetryTimeout = null;
+      }
       VoiceService.instance.stopSpeaking();
       VoiceService.instance.abortListening();
       VoiceService.instance.stateListeners.clear();
@@ -262,6 +290,12 @@ export class VoiceService {
     const hasPermission = await this.requestMicrophonePermission();
     if (!hasPermission) return;
 
+    // Clear any pending network retry timeout
+    if (this.networkRetryTimeout) {
+      clearTimeout(this.networkRetryTimeout);
+      this.networkRetryTimeout = null;
+    }
+
     // Abort existing active instance if any to release browser microphone
     if (this.recognitionInstance) {
       try {
@@ -280,14 +314,17 @@ export class VoiceService {
 
       recognition.continuous = false; // Turn-based listening
       recognition.interimResults = true;
-      recognition.lang = this.config.lang || "en-US";
+      recognition.lang = this.getValidBcp47Lang();
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
+        this.networkRetryCount = 0;
+        this.isAutoRecovering = false;
         this.setState("listening");
       };
 
       recognition.onresult = (event: any) => {
+        this.networkRetryCount = 0;
         let interim = "";
         let final = "";
 
@@ -313,19 +350,54 @@ export class VoiceService {
       recognition.onerror = (event: any) => {
         const errorType = event.error;
         if (errorType === "not-allowed" || errorType === "service-not-allowed") {
+          this.networkRetryCount = 0;
+          this.isAutoRecovering = false;
           this.notifyError(
             "mic_permission_denied",
             "Microphone permission was denied by the browser."
           );
         } else if (errorType === "no-speech" || errorType === "aborted") {
           // User stayed silent or recognition was stopped/preempted; cleanly reset to idle without alert
+          this.networkRetryCount = 0;
+          this.isAutoRecovering = false;
           this.setState("idle");
         } else if (errorType === "network") {
+          // Web Speech API network errors are frequently transient (Google Speech socket drops, mic handover latency)
+          if (this.networkRetryCount < 2) {
+            this.networkRetryCount++;
+            this.isAutoRecovering = true;
+            console.warn(
+              `[VoiceService] Transient speech recognition network dropout (attempt ${this.networkRetryCount}/2). Auto-reconnecting...`
+            );
+            if (this.networkRetryTimeout) {
+              clearTimeout(this.networkRetryTimeout);
+            }
+            this.networkRetryTimeout = setTimeout(() => {
+              this.networkRetryTimeout = null;
+              this.startListening().catch((err) => {
+                console.error("[VoiceService] Auto-recovery retry failed:", err);
+              });
+            }, 600);
+            return;
+          }
+
+          // Retries exhausted — notify user gracefully with clear, actionable message
+          this.networkRetryCount = 0;
+          this.isAutoRecovering = false;
           this.notifyError(
             "network_error",
-            "Speech recognition network error. Please check your connection."
+            "Speech recognition connection timed out. Please check your connection or tap Retry.",
+            "Web Speech API requires an active internet connection to cloud speech services."
           );
+          // Auto-reset state to idle after 4s so microphone is immediately clickable again
+          setTimeout(() => {
+            if (this.state === "error") {
+              this.setState("idle");
+            }
+          }, 4000);
         } else {
+          this.networkRetryCount = 0;
+          this.isAutoRecovering = false;
           this.notifyError(
             "speech_recognition_error",
             `Speech recognition encountered an issue (${errorType}).`
@@ -335,6 +407,10 @@ export class VoiceService {
 
       recognition.onend = () => {
         this.recognitionInstance = null;
+        // If actively attempting an auto-recovery retry, don't overwrite state to idle
+        if (this.isAutoRecovering || this.networkRetryTimeout) {
+          return;
+        }
         if (this.state === "listening") {
           // If we had final transcript captured, transition to processing, else idle
           if (this.currentTranscript.trim().length > 0) {
@@ -348,6 +424,8 @@ export class VoiceService {
       this.recognitionInstance = recognition;
       recognition.start();
     } catch (err: any) {
+      this.networkRetryCount = 0;
+      this.isAutoRecovering = false;
       this.notifyError(
         "speech_recognition_error",
         "Failed to initialize speech recognition engine.",
@@ -360,6 +438,13 @@ export class VoiceService {
    * Stop listening gracefully
    */
   public stopListening(): void {
+    if (this.networkRetryTimeout) {
+      clearTimeout(this.networkRetryTimeout);
+      this.networkRetryTimeout = null;
+    }
+    this.networkRetryCount = 0;
+    this.isAutoRecovering = false;
+
     if (this.recognitionInstance) {
       try {
         this.recognitionInstance.stop();
@@ -373,6 +458,13 @@ export class VoiceService {
    * Abort listening immediately
    */
   public abortListening(): void {
+    if (this.networkRetryTimeout) {
+      clearTimeout(this.networkRetryTimeout);
+      this.networkRetryTimeout = null;
+    }
+    this.networkRetryCount = 0;
+    this.isAutoRecovering = false;
+
     if (this.recognitionInstance) {
       try {
         this.recognitionInstance.abort();

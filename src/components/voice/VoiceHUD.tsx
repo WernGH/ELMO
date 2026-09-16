@@ -379,6 +379,18 @@ export function VoiceHUD({
             {error.details && (
               <p className="mt-1 font-mono text-[10px] text-zinc-400">{error.details}</p>
             )}
+            {(error.code === "network_error" || error.code === "speech_recognition_error") && (
+              <button
+                onClick={() => {
+                  onClearError();
+                  onStartListening();
+                }}
+                className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/80 border border-red-500/40 text-red-200 text-[11px] font-mono font-medium transition-all hover:scale-105 active:scale-95"
+              >
+                <RotateCcw className="w-3 h-3 text-red-300" />
+                Retry Voice Input
+              </button>
+            )}
           </div>
           <button
             onClick={onClearError}

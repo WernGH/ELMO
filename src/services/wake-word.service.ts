@@ -41,7 +41,7 @@ export class WakeWordService {
   private isMicActive = false;
 
   private recognitionInstance: any = null;
-  private isRestarting = false;
+  private restartTimer: any = null;
   private shouldBeListening = false;
 
   // Active conversation window timer
@@ -286,9 +286,10 @@ export class WakeWordService {
 
     this.shouldBeListening = true;
 
-    // Do not start ambient wake-word recognition while VoiceService is actively listening to user speech
+    // Do not start ambient wake-word recognition while VoiceService is actively listening or processing
     const voiceService = VoiceService.getInstance();
-    if (voiceService.getState() === "listening") {
+    const vsState = voiceService.getState();
+    if (vsState === "listening" || vsState === "processing" || (vsState === "speaking" && !this.settings.interruptElmo)) {
       this.setStatus("paused");
       return;
     }
@@ -392,15 +393,21 @@ export class WakeWordService {
 
         // Automatically restart ambient listener if still enabled and not manually stopped
         if (this.shouldBeListening && this.settings.wakeWordDetection) {
-          if (!this.isRestarting) {
-            this.isRestarting = true;
-            setTimeout(() => {
-              this.isRestarting = false;
-              if (this.shouldBeListening) {
-                this.startListening();
-              }
-            }, 300);
+          if (this.restartTimer) {
+            clearTimeout(this.restartTimer);
           }
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            if (this.shouldBeListening && this.settings.wakeWordDetection) {
+              const voiceService = VoiceService.getInstance();
+              const state = voiceService.getState();
+              if (state !== "listening" && state !== "processing" && (state !== "speaking" || this.settings.interruptElmo)) {
+                this.startListening();
+              } else {
+                this.setStatus("paused");
+              }
+            }
+          }, 300);
         } else {
           this.setStatus(this.settings.wakeWordDetection ? "paused" : "disabled");
         }
@@ -419,6 +426,10 @@ export class WakeWordService {
    */
   public pauseListening(): void {
     this.shouldBeListening = false;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.recognitionInstance) {
       try {
         this.recognitionInstance.abort();
@@ -436,6 +447,10 @@ export class WakeWordService {
    */
   public stopListening(): void {
     this.shouldBeListening = false;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.recognitionInstance) {
       try {
         this.recognitionInstance.stop();

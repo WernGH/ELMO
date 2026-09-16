@@ -168,6 +168,41 @@ describe("VoiceService — Phase 3 Voice CEO Engine", () => {
       voiceService.abortListening();
       expect(voiceService.getState()).toBe("idle");
     });
+
+    it("should resolve a valid BCP-47 tag and prevent auto or unknown tags from crashing", () => {
+      voiceService.setLanguage("ms");
+      expect(voiceService.getValidBcp47Lang()).toBe("ms-MY");
+
+      voiceService.setLanguage("auto");
+      const autoTag = voiceService.getValidBcp47Lang();
+      expect(autoTag).not.toBe("auto");
+      expect(autoTag).not.toBe("auto-AUTO");
+      expect(autoTag.length).toBeGreaterThanOrEqual(2);
+
+      voiceService.setLanguage("zh");
+      expect(voiceService.getValidBcp47Lang()).toBe("zh-CN");
+    });
+
+    it("should attempt auto-recovery on transient network error without immediate fatal error", async () => {
+      vi.useFakeTimers();
+      let errorNotified: any = null;
+      voiceService.subscribeError((err) => {
+        errorNotified = err;
+      });
+
+      await voiceService.startListening();
+      const rec = (voiceService as any).recognitionInstance;
+      expect(rec).not.toBeNull();
+
+      // Trigger first transient network error
+      rec.onerror({ error: "network" });
+
+      // First dropout should NOT emit a fatal error banner; it schedules auto-recovery
+      expect(errorNotified).toBeNull();
+      expect((voiceService as any).networkRetryCount).toBe(1);
+
+      vi.useRealTimers();
+    });
   });
 
   describe("Text-to-Speech (TTS) & Markdown Stripping", () => {

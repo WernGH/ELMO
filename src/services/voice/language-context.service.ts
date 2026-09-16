@@ -183,7 +183,7 @@ export class LanguageContextService {
   // 4. PRE-REGISTERED WORLD LANGUAGE CAPABILITY REGISTRY
   // =========================================================================
   private readonly CAPABILITY_REGISTRY: Map<string, LanguageCapability> = new Map([
-    ["auto", { languageCode: "auto", languageName: "Auto-Detect Language", nativeName: "✨ Auto-Detect (Global)", bcp47Tag: "auto", speechRecognitionSupported: true, realtimeSupported: true, textGenerationSupported: true, textToSpeechSupported: true, voiceSupported: true, qualityLevel: "native", provider: "universal" }],
+    ["auto", { languageCode: "auto", languageName: "Auto-Detect Language", nativeName: "✨ Auto-Detect (Global)", bcp47Tag: "en-US", speechRecognitionSupported: true, realtimeSupported: true, textGenerationSupported: true, textToSpeechSupported: true, voiceSupported: true, qualityLevel: "native", provider: "universal" }],
     ["en", { languageCode: "en", languageName: "English", nativeName: "English", bcp47Tag: "en-US", speechRecognitionSupported: true, realtimeSupported: true, textGenerationSupported: true, textToSpeechSupported: true, voiceSupported: true, qualityLevel: "native", provider: "universal" }],
     ["ms", { languageCode: "ms", languageName: "Malay", nativeName: "Bahasa Melayu", bcp47Tag: "ms-MY", speechRecognitionSupported: true, realtimeSupported: true, textGenerationSupported: true, textToSpeechSupported: true, voiceSupported: true, qualityLevel: "native", provider: "universal" }],
     ["zh", { languageCode: "zh", languageName: "Mandarin Chinese", nativeName: "中文 (普通话)", bcp47Tag: "zh-CN", speechRecognitionSupported: true, realtimeSupported: true, textGenerationSupported: true, textToSpeechSupported: true, voiceSupported: true, qualityLevel: "native", provider: "universal" }],
@@ -836,8 +836,14 @@ export class LanguageContextService {
    * Translates language code to exact BCP-47 tag for Speech Recognition & Synthesis
    */
   public static getBcp47Tag(code: string): string {
-    if (!code || code === "auto") return "en-US";
+    if (!code) return "en-US";
     const lower = code.toLowerCase().trim();
+    if (lower === "auto" || lower === "mixed" || lower === "unknown") {
+      if (typeof window !== "undefined" && window.navigator?.language) {
+        return window.navigator.language;
+      }
+      return "en-US";
+    }
     if (lower.includes("-")) return code;
 
     const bcpMap: Record<string, string> = {

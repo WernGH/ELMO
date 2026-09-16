@@ -158,6 +158,8 @@ export function useVoice(options: UseVoiceOptions = {}) {
     if (voiceServiceRef.current) {
       // Pause ambient recognizer while active recognition runs
       wakeWordServiceRef.current?.pauseListening();
+      // Socket detachment cooldown: give browser audio stack 80ms to close ambient socket
+      await new Promise((resolve) => setTimeout(resolve, 80));
       await voiceServiceRef.current.startListening();
     }
   }, []);
