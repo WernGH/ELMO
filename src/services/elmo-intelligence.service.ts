@@ -359,13 +359,20 @@ export class ELMOIntelligenceService {
        saasIntentAnalysis.intent === "component_creation" ||
        saasIntentAnalysis.intent === "code_generation" ||
        saasIntentAnalysis.intent === "preview_request" ||
-       /\b(bina|buat|build|create|make)\b.*\b(landing page|sales page|website|laman web|halaman)\b/i.test(
+       saasIntentAnalysis.intent === "funnel_creation" ||
+       saasIntentAnalysis.intent === "planning" ||
+       saasIntentAnalysis.intent === "task_execution" ||
+       saasIntentAnalysis.intent === "goal_formulation" ||
+       /\b(bina|buat|build|create|make|launch|design)\b.*\b(landing page|sales page|website|webpage|web app|crm|dashboard|portal|application|laman web|halaman)\b/i.test(
          lowerMessage
        ) ||
-       /(build me a landing page|create me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
+       /(build me a landing page|create me a landing page|create a landing page|build a complete website|build a website|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form|dark mode)/i.test(
          lowerMessage
        ) ||
-       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(
+       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|get me more qualified leads|get more qualified leads|campaign for my business|research my competitors|kempen jana leads)/i.test(
+         lowerMessage
+       ) ||
+       /(build a simple crm|crm dashboard|sales team dashboard|customer portal|internal tool)/i.test(
          lowerMessage
        ));
 
@@ -438,6 +445,7 @@ export class ELMOIntelligenceService {
             type: responseType,
             responseType,
             content: responseText,
+            turnMode: "EXECUTION",
             languageCode: langCtx.responseLanguage,
             inputMode,
             detectedLanguage: langCtx.detectedLanguage,
@@ -927,13 +935,20 @@ export class ELMOIntelligenceService {
        saasIntentAnalysis.intent === "component_creation" ||
        saasIntentAnalysis.intent === "code_generation" ||
        saasIntentAnalysis.intent === "preview_request" ||
-       /\b(bina|buat|build|create|make)\b.*\b(landing page|sales page|website|laman web|halaman)\b/i.test(
+       saasIntentAnalysis.intent === "funnel_creation" ||
+       saasIntentAnalysis.intent === "planning" ||
+       saasIntentAnalysis.intent === "task_execution" ||
+       saasIntentAnalysis.intent === "goal_formulation" ||
+       /\b(bina|buat|build|create|make|launch|design)\b.*\b(landing page|sales page|website|webpage|web app|crm|dashboard|portal|application|laman web|halaman)\b/i.test(
          lowerMessage
        ) ||
-       /(build me a landing page|create me a landing page|create a landing page|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form)/i.test(
+       /(build me a landing page|create me a landing page|create a landing page|build a complete website|build a website|bina landing page|make the hero|change the cta|mobile friendly|move testimonials|more premium|shorten the headline|add a lead form|dark mode)/i.test(
          lowerMessage
        ) ||
-       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|campaign for my business|research my competitors|kempen jana leads)/i.test(
+       /(launch a lead generation campaign|create a campaign to get more leads|lead generation campaign|get me more qualified leads|get more qualified leads|campaign for my business|research my competitors|kempen jana leads)/i.test(
+         lowerMessage
+       ) ||
+       /(build a simple crm|crm dashboard|sales team dashboard|customer portal|internal tool)/i.test(
          lowerMessage
        ));
 

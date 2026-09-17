@@ -20,8 +20,13 @@ import {
   FormInput,
   Mail,
   BarChart3,
+  Receipt,
+  CalendarCheck,
+  Star,
+  UserCheck,
+  BookOpen,
 } from "lucide-react";
-import { NAVIGATION_ITEMS, SAAS_NAVIGATION_ITEMS, ELMO_IDENTITY } from "@/lib/constants";
+import { NAVIGATION_ITEMS, SAAS_NAVIGATION_ITEMS, BUSINESS_OPERATIONS_NAV_ITEMS, ELMO_IDENTITY } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -40,6 +45,11 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   FormInput,
   Mail,
   BarChart3,
+  Receipt,
+  CalendarCheck,
+  Star,
+  UserCheck,
+  BookOpen,
 };
 
 export function Sidebar() {
@@ -136,6 +146,50 @@ export function Sidebar() {
                   </span>
                 )}
                 {isActive && <ChevronRight className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+              </div>
+            </Link>
+          );
+        })}
+
+        {/* Business Operations Suite */}
+        <div className="px-3 pb-1 pt-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500/80">
+          Business Operations
+        </div>
+        {BUSINESS_OPERATIONS_NAV_ITEMS.map((item) => {
+          const Icon = iconMap[item.iconName] || LayoutDashboard;
+          const isActive =
+            pathname === item.href || pathname?.startsWith(`${item.href}/`);
+
+          return (
+            <Link
+              key={item.name}
+              href={item.href}
+              className={cn(
+                "group relative flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
+                isActive
+                  ? "bg-gradient-to-r from-amber-950/60 to-orange-950/40 text-amber-200 border border-amber-400/40 shadow-[0_0_20px_rgba(245,158,11,0.25)] font-semibold"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-[#0A1324]/80 border border-transparent"
+              )}
+            >
+              {isActive && (
+                <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-amber-400 rounded-r shadow-[0_0_12px_rgba(245,158,11,1)]" />
+              )}
+              <div className="flex items-center gap-3">
+                <Icon
+                  className={cn(
+                    "w-4 h-4 transition-colors",
+                    isActive ? "text-amber-400" : "text-zinc-500 group-hover:text-zinc-300"
+                  )}
+                />
+                <span className="font-sans">{item.name}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {item.badge && (
+                  <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                    {item.badge}
+                  </span>
+                )}
+                {isActive && <ChevronRight className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
               </div>
             </Link>
           );

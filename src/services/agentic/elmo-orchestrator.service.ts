@@ -1,9 +1,10 @@
 /**
- * ELMO Phase 3 — Central Orchestrator Service (ElmoOrchestratorService)
+ * ELMO Phase 3 — Central AI-Native Execution Engine & Dynamic Orchestrator (ElmoOrchestratorService)
  *
- * Coordinates multi-agent planning, dependency-driven execution (supporting both parallel
- * and sequential steps), bounded retries, loop protection, Company Brain memory integration,
- * audit execution logging, and unified response synthesis directly underneath ELMO Central Brain.
+ * Coordinates multi-agent dynamic planning, dependency-driven execution (supporting both parallel
+ * and sequential steps), bounded retries, loop protection, technical & business verification,
+ * interactive human-in-the-loop approval controls, Company Brain memory integration,
+ * immutable activity logging, and audit history recording directly underneath ELMO Central Brain.
  */
 
 import {
@@ -15,12 +16,16 @@ import {
   RiskLevel,
   PendingApprovalDetails,
   ExecutionHistoryRecord,
+  CanonicalExecutionObject,
+  ExecutionState,
 } from "./types/agentic.types";
 import { AgentRegistryService } from "./agent-registry.service";
 import { AgentExecutorService } from "./agent-executor.service";
 import { ExecutionHistoryService } from "./execution-history.service";
 import { ElmoIntentService, IntentAnalysisResult } from "@/services/elmo-intent.service";
 import { ElmoMemoryService } from "@/services/elmo-memory.service";
+import { ApprovalService } from "@/services/approval.service";
+import { ActivityService } from "@/services/activity.service";
 import { MemoryEntry } from "@/types/future/memory.types";
 
 export interface OrchestratorInput {
@@ -43,6 +48,19 @@ export interface OrchestrationResult {
   previewPayload?: unknown;
   pendingApproval?: PendingApprovalDetails;
   visualState: "THINKING" | "EXECUTING" | "SUCCESS" | "ERROR" | "AWAITING_APPROVAL";
+  canonicalExecution?: CanonicalExecutionObject;
+}
+
+interface ActiveExecutionState {
+  plan: ExecutionPlan;
+  input: OrchestratorInput;
+  accumulatedContext: Record<string, unknown>;
+  completedStepIds: Set<string>;
+  startTime: number;
+  totalRetries: number;
+  replanCount: number;
+  agentResults: AgentResult[];
+  previewPayload: unknown;
 }
 
 export class ElmoOrchestratorService {
@@ -52,9 +70,13 @@ export class ElmoOrchestratorService {
   private intentService: ElmoIntentService;
   private memoryService: ElmoMemoryService;
   private historyService: ExecutionHistoryService;
+  private approvalService: ApprovalService;
+  private activityService: ActivityService;
 
-  // Stored plans: planId -> ExecutionPlan
+  // Stored active plans: planId -> ExecutionPlan
   private activePlans: Map<string, ExecutionPlan> = new Map();
+  // Stored active executions paused for approval or replan: executionId -> ActiveExecutionState
+  private activeExecutions: Map<string, ActiveExecutionState> = new Map();
 
   private constructor() {
     this.registry = AgentRegistryService.getInstance();
@@ -62,6 +84,8 @@ export class ElmoOrchestratorService {
     this.intentService = ElmoIntentService.getInstance();
     this.memoryService = ElmoMemoryService.getInstance();
     this.historyService = ExecutionHistoryService.getInstance();
+    this.approvalService = ApprovalService.getInstance();
+    this.activityService = ActivityService.getInstance();
   }
 
   public static getInstance(): ElmoOrchestratorService {
@@ -77,6 +101,7 @@ export class ElmoOrchestratorService {
 
   public reset(): void {
     this.activePlans.clear();
+    this.activeExecutions.clear();
     this.historyService.reset();
   }
 
@@ -93,8 +118,11 @@ export class ElmoOrchestratorService {
     const isDirectExplanation =
       /^(what is|explain|tell me about|terangkan|apakah)/i.test(lower) &&
       !lower.includes("landing page") &&
+      !lower.includes("website") &&
       !lower.includes("funnel") &&
-      !lower.includes("campaign");
+      !lower.includes("campaign") &&
+      !lower.includes("crm") &&
+      !lower.includes("dashboard");
 
     if (isGreeting || isSmallTalk || isDirectExplanation) {
       return {
@@ -111,7 +139,6 @@ export class ElmoOrchestratorService {
     // 3. Plan Generation (Single Agent vs Multi-Agent)
     const plan = this.createExecutionPlan(input, intent);
 
-    // If no agents were required, allow direct ELMO answer
     if (plan.steps.length === 0) {
       return {
         isDirectAnswer: true,
@@ -123,12 +150,12 @@ export class ElmoOrchestratorService {
 
     this.activePlans.set(plan.id, plan);
 
-    // 4. Controlled Execution with Loop Protection, Parallel Support, Retries & Approval Gates
+    // 4. Controlled AI-Native Execution Loop
     return await this.executePlan(plan, input);
   }
 
   /**
-   * Plans ordered and parallel-capable steps dynamically based on the user's intent and goal.
+   * Plans ordered and parallel-capable steps dynamically based on user outcome and context.
    */
   public createExecutionPlan(input: OrchestratorInput, intent: IntentAnalysisResult): ExecutionPlan {
     const raw = input.message.trim();
@@ -136,7 +163,92 @@ export class ElmoOrchestratorService {
     const planId = `plan-${Date.now()}`;
     const steps: ExecutionStep[] = [];
 
-    // Check for explicit natural language edits to landing page / website
+    // Extract target audience and industry topic dynamically (Priority Rule: Explicit > Company Brain > Generic)
+    let targetAudience = "";
+    let topic = "Business";
+
+    // 1. Explicit Target Audience extraction from prompt:
+    const explicitAudienceMatch = raw.match(/(?:targeting|aimed at|focus on|sasaran|untuk)\s+([^.,\n\r]+)/i);
+    if (explicitAudienceMatch && explicitAudienceMatch[1]) {
+      const candidate = explicitAudienceMatch[1].trim();
+      if (!candidate.toLowerCase().includes("landing page") && !candidate.toLowerCase().includes("my business")) {
+        targetAudience = candidate.replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+
+    // 2. Identify industry / topic:
+    if (lower.includes("restaurant") || lower.includes("cafe") || lower.includes("dining") || lower.includes("food") || lower.includes("bistro") || lower.includes("bakery")) {
+      topic = "Restaurant";
+      if (!targetAudience) targetAudience = "Diners & Food Enthusiasts";
+    } else if (lower.includes("insurance") || lower.includes("takaful") || lower.includes("cyber insurance") || lower.includes("policy")) {
+      topic = "Insurance";
+      if (!targetAudience) targetAudience = "Insurance & Policy Seekers";
+    } else if (lower.includes("fitness") || lower.includes("gym") || lower.includes("workout")) {
+      topic = "Fitness";
+      if (!targetAudience) targetAudience = "Fitness Enthusiasts & Members";
+    } else if (lower.includes("saas") || lower.includes("software") || lower.includes("ai business") || lower.includes("ai platform")) {
+      topic = "AI & Technology";
+      if (!targetAudience) targetAudience = "Modern Tech Teams & Founders";
+    } else if (lower.includes("property agent") || lower.includes("real estate") || lower.includes("hartanah")) {
+      topic = "Real Estate";
+      if (!targetAudience) targetAudience = "Property Buyers & Investors";
+    } else if (lower.includes("consult") || lower.includes("coach") || lower.includes("coaching")) {
+      topic = "Coaching";
+      if (!targetAudience) targetAudience = "Coaching Clients & Leaders";
+    } else if (lower.includes("e-commerce") || lower.includes("ecommerce")) {
+      topic = "E-Commerce";
+      if (!targetAudience) targetAudience = "Online Shoppers";
+    }
+
+    if (!targetAudience) {
+      targetAudience = "Prospective Clients";
+    }
+
+    // Company Brain fallback if topic wasn't explicitly found in user message
+    if (topic === "Business" && input.companyBrainContext) {
+      const orgName = ((input.companyBrainContext.organization as any)?.name || "").toLowerCase();
+      const memories = (input.companyBrainContext.memories as any[]) || [];
+      const memoryText = memories.map((m) => m.content || "").join(" ").toLowerCase();
+      const combined = `${orgName} ${memoryText}`;
+
+      if (combined.includes("restaurant") || combined.includes("cafe") || combined.includes("bistro") || combined.includes("dining")) {
+        topic = "Restaurant";
+        targetAudience = "Diners & Food Enthusiasts";
+      } else if (combined.includes("insurance") || combined.includes("takaful")) {
+        topic = "Insurance";
+        targetAudience = "Insurance & Policy Seekers";
+      } else if (combined.includes("fitness") || combined.includes("gym")) {
+        topic = "Fitness";
+        targetAudience = "Fitness Enthusiasts & Members";
+      } else if (combined.includes("property") || combined.includes("real estate") || combined.includes("hartanah")) {
+        topic = "Real Estate";
+        targetAudience = "Property Buyers & Investors";
+      } else if (combined.includes("coach") || combined.includes("consult")) {
+        topic = "Coaching";
+        targetAudience = "Coaching Clients & Leaders";
+      }
+    }
+
+    // Classification Categories:
+    const isPublishOrDeploy =
+      lower.includes("publish the website") ||
+      lower.includes("publish website") ||
+      lower.includes("publish landing page") ||
+      lower.includes("publish page") ||
+      lower.includes("deploy live") ||
+      lower.includes("launch live");
+
+    const isWebApplication =
+      lower.includes("crm") ||
+      lower.includes("dashboard") ||
+      lower.includes("customer portal") ||
+      lower.includes("admin portal") ||
+      lower.includes("internal tool") ||
+      lower.includes("web app") ||
+      lower.includes("web application") ||
+      lower.includes("sales team portal") ||
+      (lower.includes("sales team") && lower.includes("dashboard"));
+
     const isWebEdit =
       lower.includes("make the hero") ||
       lower.includes("change the cta") ||
@@ -144,9 +256,12 @@ export class ElmoOrchestratorService {
       lower.includes("move testimonials") ||
       lower.includes("shorten the headline") ||
       lower.includes("add a lead form") ||
-      lower.includes("more premium");
+      lower.includes("more premium") ||
+      lower.includes("dark mode") ||
+      lower.includes("turn this into an italian") ||
+      lower.includes("pivot to") ||
+      lower.includes("rollback to");
 
-    // Check for full landing page or website creation
     const isFullWebCreation =
       /\b(create|build|make|generate|design|launch|bina|buat)\b.*\b(landing page|website|webpage|sales page|funnel page)\b/i.test(lower) ||
       (lower.includes("landing page") && (lower.includes("create") || lower.includes("build") || lower.includes("make") || lower.includes("bina") || lower.includes("buat"))) ||
@@ -154,52 +269,73 @@ export class ElmoOrchestratorService {
       lower.includes("create me a landing page") ||
       lower.includes("create a landing page") ||
       lower.includes("build a website") ||
+      lower.includes("build a complete website") ||
       lower.includes("create a website") ||
       lower.includes("bina landing page") ||
       lower.includes("buat landing page");
 
-    // Check for headline / copy specific request
     const isCopyOnly =
       (lower.includes("headline") || lower.includes("copy") || lower.includes("tajuk")) &&
       !isFullWebCreation &&
       !isWebEdit &&
+      !isWebApplication &&
       !lower.includes("campaign") &&
       !lower.includes("lead generation");
 
-    // Check for analytics request
     const isAnalyticsOnly =
       lower.includes("analytics") ||
       lower.includes("metric") ||
       lower.includes("conversion rate") ||
       lower.includes("drop-off");
 
-    // Check for comprehensive lead gen / campaign outcome directive (Section 37 acceptance requirement)
     const isLeadGenCampaign =
       (lower.includes("launch a lead generation campaign") ||
         lower.includes("create a campaign to get more leads") ||
         lower.includes("lead generation campaign") ||
+        lower.includes("get me more qualified leads") ||
+        lower.includes("get more qualified leads") ||
         lower.includes("campaign for my business") ||
         lower.includes("kempen jana leads")) &&
       !isCopyOnly &&
       !isAnalyticsOnly;
 
-    // Check for competitor research + landing page
     const isCompetitorLandingPage =
       lower.includes("competitor") &&
       (lower.includes("landing page") || lower.includes("page") || lower.includes("website"));
 
-    // Extract target audience if mentioned
-    let targetAudience = "Property Agents";
-    if (lower.includes("property agent") || lower.includes("real estate") || lower.includes("hartanah")) {
-      targetAudience = "Property Agents";
-    } else if (lower.includes("consult") || lower.includes("coach")) {
-      targetAudience = "Consultants & Coaches";
-    } else if (lower.includes("e-commerce") || lower.includes("ecommerce")) {
-      targetAudience = "E-commerce Brands";
-    }
-
-    if (isWebEdit) {
-      // Single-Agent Web/Coding Agent Edit
+    // Formulate Steps:
+    if (isPublishOrDeploy) {
+      // High-risk publishing: Requires explicit approval
+      steps.push({
+        id: `step-1`,
+        stepNumber: 1,
+        agentId: "web-coding-agent",
+        agentName: "Web/Coding Agent",
+        task: `Publish landing page publicly to live domain /p/[slug]`,
+        dependencies: [],
+        status: "PENDING",
+        riskLevel: "HIGH",
+        approvalRequired: true,
+        input: { message: raw, publish: true, topic },
+        maxRetries: 1,
+      });
+    } else if (isWebApplication) {
+      // 10-step Application Specification and Interactive Prototype
+      steps.push({
+        id: `step-1`,
+        stepNumber: 1,
+        agentId: "web-coding-agent",
+        agentName: "Web/Coding Agent",
+        task: `Generate 10-step software architecture specification and interactive prototype for: ${raw}`,
+        dependencies: [],
+        status: "PENDING",
+        riskLevel: "LOW",
+        approvalRequired: false,
+        input: { message: raw, projectType: "CRM / Dashboard Application", topic, targetAudience },
+        maxRetries: 2,
+      });
+    } else if (isWebEdit) {
+      // Natural Language AST Modification
       steps.push({
         id: `step-1`,
         stepNumber: 1,
@@ -210,32 +346,30 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
-        input: { message: raw },
+        input: { message: raw, topic },
         maxRetries: 2,
       });
     } else if (isCopyOnly) {
-      // Single-Agent Copy Generation
       steps.push({
         id: `step-1`,
         stepNumber: 1,
         agentId: "copy-agent",
         agentName: "Copy Agent",
-        task: `Generate headlines and conversion copy: ${raw}`,
+        task: `Generate conversion headlines and tailored copy for ${topic}`,
         dependencies: [],
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
-        input: { topic: raw, targetAudience },
+        input: { topic: raw, targetAudience, industry: topic },
         maxRetries: 2,
       });
     } else if (isAnalyticsOnly) {
-      // Single-Agent Analytics Audit
       steps.push({
         id: `step-1`,
         stepNumber: 1,
         agentId: "analytics-agent",
         agentName: "Analytics Agent",
-        task: "Analyze conversion performance and recommendations",
+        task: "Analyze conversion funnel metrics and recommend optimizations",
         dependencies: [],
         status: "PENDING",
         riskLevel: "LOW",
@@ -244,12 +378,7 @@ export class ElmoOrchestratorService {
         maxRetries: 2,
       });
     } else if (isLeadGenCampaign) {
-      // AI-Native End-to-End Campaign Goal (Section 37 Acceptance Test):
-      // Step 1: Research Agent (Audience pain points & market insights)
-      // Step 2: Marketing Agent (Positioning & offer strategy) - Runs concurrently/in parallel with Step 1
-      // Step 3: Copy Agent (Craft conversion copy & headlines, depends on Step 1 and Step 2)
-      // Step 4: Web/Coding Agent (Build & validate responsive landing page, depends on Step 3)
-      // Step 5: Funnel Agent (Connect lead qualification and capture flow, depends on Step 4)
+      // Multi-Agent Workflow: Research & Marketing in parallel -> Copy -> Web/Coding -> Funnel
       steps.push(
         {
           id: `step-1`,
@@ -261,7 +390,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: "Lead Generation Campaign" },
+          input: { targetAudience, topic: `${topic} Lead Generation` },
           maxRetries: 2,
         },
         {
@@ -270,11 +399,11 @@ export class ElmoOrchestratorService {
           agentId: "marketing-agent",
           agentName: "Marketing Agent",
           task: `Define positioning, value proposition, and campaign offer strategy for ${targetAudience}`,
-          dependencies: [], // Independent: can run in parallel with step-1
+          dependencies: [], // Can run in parallel with step-1
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, businessType: "AI Business" },
+          input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
         {
@@ -282,12 +411,12 @@ export class ElmoOrchestratorService {
           stepNumber: 3,
           agentId: "copy-agent",
           agentName: "Copy Agent",
-          task: `Draft high-converting headlines, benefits, and call-to-actions tailored for ${targetAudience}`,
+          task: `Draft conversion headlines, benefits, and call-to-actions tailored for ${targetAudience}`,
           dependencies: ["step-1", "step-2"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience },
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -295,12 +424,12 @@ export class ElmoOrchestratorService {
           stepNumber: 4,
           agentId: "web-coding-agent",
           agentName: "Web/Coding Agent",
-          task: `Build, style, and validate the interactive campaign landing page for ${targetAudience}`,
+          task: `Build, style, and validate the responsive landing page for ${targetAudience}`,
           dependencies: ["step-3"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: "Lead Generation Campaign" },
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -308,7 +437,7 @@ export class ElmoOrchestratorService {
           stepNumber: 5,
           agentId: "funnel-agent",
           agentName: "Funnel Agent",
-          task: `Establish lead capture, qualification, and automated conversion flow for ${targetAudience}`,
+          task: `Connect lead qualification and capture flow for ${targetAudience}`,
           dependencies: ["step-4"],
           status: "PENDING",
           riskLevel: "LOW",
@@ -318,7 +447,6 @@ export class ElmoOrchestratorService {
         }
       );
     } else if (isCompetitorLandingPage) {
-      // Competitor Research + Landing Page Workflow:
       steps.push(
         {
           id: `step-1`,
@@ -330,7 +458,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: "competitor research" },
+          input: { targetAudience, topic: `${topic} competitor research` },
           maxRetries: 2,
         },
         {
@@ -343,7 +471,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, businessType: "AI Business" },
+          input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
         {
@@ -356,7 +484,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience },
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -369,12 +497,12 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: "AI Business" },
+          input: { targetAudience, topic },
           maxRetries: 2,
         }
       );
     } else if (isFullWebCreation) {
-      // Multi-Agent Workflow: Marketing -> Copy -> Web/Coding -> Funnel
+      // Dynamic multi-agent web creation: Marketing -> Copy -> Web/Coding -> Funnel
       steps.push(
         {
           id: `step-1`,
@@ -386,7 +514,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, businessType: "AI Business" },
+          input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
         {
@@ -399,7 +527,7 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience },
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -407,12 +535,12 @@ export class ElmoOrchestratorService {
           stepNumber: 3,
           agentId: "web-coding-agent",
           agentName: "Web/Coding Agent",
-          task: `Build, style, and validate the responsive landing page for ${targetAudience}`,
+          task: `Build, style, and validate the responsive web experience for ${targetAudience}`,
           dependencies: ["step-2"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: "AI Business" },
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -420,12 +548,12 @@ export class ElmoOrchestratorService {
           stepNumber: 4,
           agentId: "funnel-agent",
           agentName: "Funnel Agent",
-          task: `Connect landing page to lead qualification and conversion flow`,
+          task: `Connect web experience to lead qualification and conversion flow`,
           dependencies: ["step-3"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { message: `Create lead generation funnel for ${targetAudience}` },
+          input: { message: `Connect conversion flow for ${targetAudience}` },
           maxRetries: 2,
         }
       );
@@ -433,9 +561,9 @@ export class ElmoOrchestratorService {
       // Default to Funnel Agent delegation for operational SaaS actions
       const isHighRisk =
         lower.includes("delete all") ||
-        lower.includes("deploy live") ||
         lower.includes("production database") ||
-        lower.includes("mass email");
+        lower.includes("mass email") ||
+        lower.includes("drop table");
 
       steps.push({
         id: `step-1`,
@@ -447,7 +575,7 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: isHighRisk ? "HIGH" : "LOW",
         approvalRequired: isHighRisk,
-        input: { message: raw },
+        input: { message: raw, topic },
         maxRetries: 2,
       });
     }
@@ -467,19 +595,11 @@ export class ElmoOrchestratorService {
   }
 
   /**
-   * Executes a plan dynamically supporting dependency resolution, parallel execution,
-   * bounded retries, loop protection, Company Brain integration, and audit logging.
+   * Executes a plan dynamically with loop protection, parallel execution, verification,
+   * bounded retries, interactive approval gates, and durable learning.
    */
   public async executePlan(plan: ExecutionPlan, input: OrchestratorInput): Promise<OrchestrationResult> {
     const startTime = Date.now();
-    const MAX_HOPS = 10;
-    const MAX_EXECUTION_TIME_MS = 30000;
-    let hops = 0;
-    let totalRetries = 0;
-    let previewPayload: unknown = null;
-    const agentResults: AgentResult[] = [];
-
-    plan.status = "IN_PROGRESS";
 
     // 1. Ingest Company Brain memories into shared execution context
     let existingMemories: MemoryEntry[] = [];
@@ -491,7 +611,7 @@ export class ElmoOrchestratorService {
         3
       );
     } catch {
-      // Non-blocking memory search
+      // Non-blocking
     }
 
     const accumulatedContext: Record<string, unknown> = {
@@ -502,9 +622,32 @@ export class ElmoOrchestratorService {
       ...input.companyBrainContext,
     };
 
-    const completedStepIds = new Set<string>();
+    const executionState: ActiveExecutionState = {
+      plan,
+      input,
+      accumulatedContext,
+      completedStepIds: new Set<string>(),
+      startTime,
+      totalRetries: 0,
+      replanCount: 0,
+      agentResults: [],
+      previewPayload: null,
+    };
 
-    // 2. Dynamic Dependency & Parallel Execution Loop
+    return await this.executePlanInternal(executionState);
+  }
+
+  /**
+   * Internal execution loop supporting resumption after approval or replanning.
+   */
+  private async executePlanInternal(state: ActiveExecutionState): Promise<OrchestrationResult> {
+    const { plan, input, accumulatedContext, completedStepIds, startTime } = state;
+    const MAX_HOPS = 10;
+    const MAX_EXECUTION_TIME_MS = 35000;
+    let hops = 0;
+
+    plan.status = "EXECUTING";
+
     while (completedStepIds.size < plan.steps.length) {
       hops++;
 
@@ -512,56 +655,75 @@ export class ElmoOrchestratorService {
       if (hops > MAX_HOPS) {
         plan.status = "FAILED";
         const timeoutRes = "ELMO Safety Guard: Execution halted because the task exceeded maximum allowed agent hops.";
-        this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, timeoutRes, "FAILED");
+        this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, timeoutRes, "FAILED");
         return {
           isDirectAnswer: false,
           response: timeoutRes,
           plan,
-          agentResults,
+          agentResults: state.agentResults,
           visualState: "ERROR",
         };
       }
 
-      // Loop Protection: Execution Time Limit
+      // Loop Protection: Timeout
       if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
         plan.status = "FAILED";
         const timeoutRes = "ELMO Safety Guard: Execution halted because task exceeded maximum execution time.";
-        this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, timeoutRes, "FAILED");
+        this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, timeoutRes, "FAILED");
         return {
           isDirectAnswer: false,
           response: timeoutRes,
           plan,
-          agentResults,
+          agentResults: state.agentResults,
           visualState: "ERROR",
         };
       }
 
-      // Find all steps whose dependencies are all satisfied and not yet completed
+      // Find ready steps
       const readySteps = plan.steps.filter((s) => {
         if (completedStepIds.has(s.id) || s.status === "COMPLETED") return false;
         return s.dependencies.every((depId) => completedStepIds.has(depId));
       });
 
       if (readySteps.length === 0) {
-        // Deadlock or circular dependency
         plan.status = "FAILED";
         const deadlockRes = "ELMO Orchestrator: Dependency resolution failed. Unresolved task prerequisites detected.";
-        this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, deadlockRes, "FAILED");
+        this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, deadlockRes, "FAILED");
         return {
           isDirectAnswer: false,
           response: deadlockRes,
           plan,
-          agentResults,
+          agentResults: state.agentResults,
           visualState: "ERROR",
         };
       }
 
-      // 3. High-Risk Approval Gate Check
+      // High-Risk Approval Gate Check
       const highRiskStep = readySteps.find((s) => s.approvalRequired || s.riskLevel === "HIGH");
       if (highRiskStep) {
-        plan.status = "AWAITING_APPROVAL";
+        plan.status = "WAITING_FOR_APPROVAL";
         highRiskStep.status = "AWAITING_APPROVAL";
+
+        let approvalId = `appr-${Date.now()}`;
+        try {
+          const approvalRecord = await this.approvalService.requestApproval({
+            organizationId: input.organizationId,
+            executionId: plan.executionId,
+            stepId: highRiskStep.id,
+            action: highRiskStep.task,
+            requestedBy: highRiskStep.agentName,
+            category: "execution",
+            riskLevel: highRiskStep.riskLevel === "HIGH" ? "High" : "Medium",
+            details: `Approval required before executing: "${highRiskStep.task}".`,
+            proposedChanges: highRiskStep.input,
+          });
+          approvalId = approvalRecord.id;
+        } catch {
+          // Safe fallback
+        }
+
         const pendingDetails: PendingApprovalDetails = {
+          approvalId,
           stepId: highRiskStep.id,
           agentId: highRiskStep.agentId,
           actionTitle: highRiskStep.task,
@@ -572,22 +734,25 @@ export class ElmoOrchestratorService {
         };
         plan.approvalRequirements = pendingDetails;
 
-        const approvalResponse = `Approval required before proceeding with step "${highRiskStep.task}". Please review and confirm.`;
-        this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, approvalResponse, "AWAITING_APPROVAL");
+        // Persist active state so approval buttons can resume execution
+        this.activeExecutions.set(plan.executionId, state);
+
+        const approvalResponse = `Approval required before proceeding with step "${highRiskStep.task}". Please review and select [Approve & Proceed], [Modify], or [Cancel].`;
+        this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, approvalResponse, "WAITING_FOR_APPROVAL");
 
         return {
           isDirectAnswer: false,
           response: approvalResponse,
           plan,
-          agentResults,
+          agentResults: state.agentResults,
           pendingApproval: pendingDetails,
           visualState: "AWAITING_APPROVAL",
         };
       }
 
-      // 4. Execute Ready Steps (Parallel execution where multiple steps are independent)
+      // Execute Ready Steps (Parallel execution where steps are independent)
       const stepExecutionPromises = readySteps.map(async (step) => {
-        step.status = "IN_PROGRESS";
+        step.status = "EXECUTING";
         step.startedAt = Date.now();
         const maxRetries = step.maxRetries ?? 2;
         step.retryCount = step.retryCount ?? 0;
@@ -611,12 +776,18 @@ export class ElmoOrchestratorService {
             const result = await this.executor.executeAgent(agentMsg);
             lastResult = result;
 
-            if (result.success && this.verifyStepOutput(step, result)) {
+            // Strict Verification: Check both technical and business success
+            const verification = this.verifyStepOutput(step, result, accumulatedContext);
+            if (result.success && verification.valid) {
               step.status = "COMPLETED";
               step.completedAt = Date.now();
               step.output = result.data;
               step.summary = result.summary;
               return { success: true, step, result };
+            } else {
+              // Diagnosed failure
+              step.error = verification.error || result.errors?.join(", ") || "Verification check failed";
+              step.input = { ...step.input, retryReason: step.error };
             }
           } catch (err: any) {
             lastResult = {
@@ -631,15 +802,14 @@ export class ElmoOrchestratorService {
               confidence: 0,
               errors: [err?.message || "Execution error"],
             };
+            step.error = err?.message || "Execution error";
           }
 
-          // Step failed: attempt bounded retry if retries remaining
           step.retryCount++;
-          totalRetries++;
+          state.totalRetries++;
 
           if (step.retryCount <= maxRetries) {
             step.status = "RETRYING";
-            // Exponential backoff
             await new Promise((resolve) => setTimeout(resolve, 50 * (step.retryCount || 1)));
           }
         }
@@ -647,35 +817,33 @@ export class ElmoOrchestratorService {
         // All retries exhausted
         step.status = "FAILED";
         step.completedAt = Date.now();
-        step.error = lastResult?.errors?.join(", ") || lastResult?.summary || "Execution failed after retries";
+        step.error = lastResult?.errors?.join(", ") || step.error || "Execution failed after retries";
         return { success: false, step, result: lastResult! };
       });
 
       const batchResults = await Promise.all(stepExecutionPromises);
 
-      // Check if any step failed fatally
       for (const res of batchResults) {
-        agentResults.push(res.result);
+        state.agentResults.push(res.result);
 
         if (!res.success) {
           plan.status = "FAILED";
           const failMsg = `ELMO encountered an issue executing ${res.step.agentName}: ${res.step.error}`;
-          this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, failMsg, "FAILED");
+          this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, failMsg, "FAILED");
           return {
             isDirectAnswer: false,
             response: failMsg,
             plan,
-            agentResults,
+            agentResults: state.agentResults,
             visualState: "ERROR",
           };
         }
 
-        // Merge successful output into shared accumulated context
         completedStepIds.add(res.step.id);
         Object.assign(accumulatedContext, res.result.data);
 
         if (res.result.data.preview) {
-          previewPayload = res.result.data.preview;
+          state.previewPayload = res.result.data.preview;
         }
       }
     }
@@ -683,60 +851,214 @@ export class ElmoOrchestratorService {
     plan.status = "COMPLETED";
     plan.completedAt = Date.now();
 
-    // 5. Synthesize final unified executive response
-    const finalResponse = this.synthesizePlanResponse(plan, agentResults);
+    // 5. Synthesize unified executive response
+    const finalResponse = this.synthesizePlanResponse(plan, state.agentResults);
 
-    // 6. Store strategic milestone to Company Memory (non-blocking)
-    if (agentResults.length >= 2) {
-      try {
-        await this.memoryService.storeMemory({
-          organizationId: input.organizationId,
-          scope: "organization",
-          content: `AI Workflow for "${plan.objective}": Successfully orchestrated with ${agentResults.length} specialized agents.`,
-          importanceScore: 0.8,
-          metadata: {
-            category: "business",
-            source: "orchestrator",
-            tags: ["strategy", "workflow-completion", ...agentResults.map((r) => r.agentId)],
-          },
-        });
-      } catch {
-        // Safe non-blocking memory update
-      }
+    // 6. Record Activity Timeline
+    try {
+      await this.activityService.recordActivity({
+        organizationId: input.organizationId,
+        userId: input.userId,
+        type: "execution_completed",
+        actorName: "ELMO Central Brain",
+        actorType: "AI",
+        description: `Completed execution for "${plan.objective}" with ${state.agentResults.length} agents.`,
+        metadata: {
+          executionId: plan.executionId,
+          agentsInvolved: plan.steps.map((s) => s.agentId),
+          durationMs: Date.now() - startTime,
+        },
+      });
+    } catch {
+      // Non-blocking
     }
 
-    // 7. Audit log in ExecutionHistoryService
-    this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, finalResponse, "COMPLETED");
+    // 7. Store durable strategic milestone & learned preferences in Company Memory
+    try {
+      await this.memoryService.storeMemory({
+        organizationId: input.organizationId,
+        scope: "organization",
+        content: `AI Workflow for "${plan.objective}": Successfully orchestrated with ${state.agentResults.length} specialized agents (${plan.steps.map((s) => s.agentName).join(", ")}).`,
+        importanceScore: 0.85,
+        metadata: {
+          category: "decisions",
+          source: "orchestrator",
+          tags: ["strategy", "workflow-completion", ...state.agentResults.map((r) => r.agentId)],
+        },
+      });
+    } catch {
+      // Non-blocking
+    }
+
+    // 8. Log Canonical Execution Object in ExecutionHistoryService
+    const canonical = this.logExecutionHistory(
+      plan,
+      input,
+      startTime,
+      state.totalRetries,
+      state.agentResults,
+      state.previewPayload,
+      finalResponse,
+      "COMPLETED"
+    );
+
+    this.activeExecutions.delete(plan.executionId);
 
     return {
       isDirectAnswer: false,
       response: finalResponse,
       plan,
-      agentResults,
-      previewPayload,
+      agentResults: state.agentResults,
+      previewPayload: state.previewPayload,
       visualState: "SUCCESS",
+      canonicalExecution: canonical,
     };
   }
 
   /**
-   * Verifies critical structured outputs of each step.
+   * Resumes or modifies an execution paused at WAITING_FOR_APPROVAL.
    */
-  private verifyStepOutput(step: ExecutionStep, result: AgentResult): boolean {
-    if (!result.success) return false;
-    if (step.agentId === "copy-agent") {
-      return Boolean(result.data.headlines || result.data.primaryHeadline || result.summary);
+  public async handleApprovalDecision(
+    executionId: string,
+    decision: "approve" | "modify" | "cancel",
+    options: { userId: string; organizationId: string; modificationNotes?: string }
+  ): Promise<OrchestrationResult> {
+    const active = this.activeExecutions.get(executionId);
+    if (!active) {
+      throw new Error(`Active execution for ${executionId} not found or already completed.`);
     }
-    if (step.agentId === "web-coding-agent") {
-      return Boolean(result.data.preview || result.data.page || result.summary);
+
+    const { plan, input, startTime, totalRetries, agentResults, previewPayload } = active;
+    const pending = plan.approvalRequirements;
+
+    if (decision === "cancel") {
+      if (pending?.approvalId) {
+        await this.approvalService.cancel(pending.approvalId, options.userId, options.organizationId, options.modificationNotes);
+      }
+      plan.status = "CANCELLED";
+      const cancelMsg = `Execution for "${plan.objective}" was cancelled by user.`;
+      this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, cancelMsg, "CANCELLED");
+      this.activeExecutions.delete(executionId);
+      return {
+        isDirectAnswer: false,
+        response: cancelMsg,
+        plan,
+        agentResults,
+        visualState: "ERROR",
+      };
     }
-    if (step.agentId === "research-agent") {
-      return Boolean(result.data.painPoints || result.data.competitorGaps || result.summary);
+
+    if (decision === "modify") {
+      if (pending?.approvalId) {
+        await this.approvalService.modify(
+          pending.approvalId,
+          options.userId,
+          options.organizationId,
+          options.modificationNotes || "User requested plan modification"
+        );
+      }
+      const targetStep = plan.steps.find((s) => s.id === pending?.stepId);
+      if (targetStep) {
+        targetStep.input = {
+          ...targetStep.input,
+          modificationNotes: options.modificationNotes,
+          notes: options.modificationNotes,
+        };
+        targetStep.approvalRequired = false;
+        targetStep.status = "PENDING";
+      }
+      plan.approvalRequirements = undefined;
+      plan.status = "REPLANNING";
+      active.replanCount++;
+      return await this.executePlanInternal(active);
     }
-    return true;
+
+    if (decision === "approve") {
+      if (pending?.approvalId) {
+        await this.approvalService.approve(pending.approvalId, options.userId, options.organizationId);
+      }
+      const targetStep = plan.steps.find((s) => s.id === pending?.stepId);
+      if (targetStep) {
+        targetStep.approvalRequired = false;
+        targetStep.status = "PENDING";
+      }
+      plan.approvalRequirements = undefined;
+      plan.status = "EXECUTING";
+      return await this.executePlanInternal(active);
+    }
+
+    throw new Error(`Unsupported approval decision: ${decision}`);
   }
 
   /**
-   * Persists record to ExecutionHistoryService.
+   * Verifies critical structured outputs of each step distinguishing technical from business success.
+   */
+  private verifyStepOutput(
+    step: ExecutionStep,
+    result: AgentResult,
+    context: Record<string, unknown>
+  ): { valid: boolean; error?: string } {
+    if (!result.success) {
+      return { valid: false, error: result.errors?.join(", ") || "Technical step execution failed" };
+    }
+
+    const topic = ((context.topic as string) || "").toLowerCase();
+
+    if (step.agentId === "copy-agent") {
+      const hasContent = Boolean(result.data.headlines || result.data.primaryHeadline || result.summary);
+      if (!hasContent) {
+        return { valid: false, error: "Copy Agent produced no headlines or copy content" };
+      }
+      if (topic.includes("restaurant") || topic.includes("cafe")) {
+        const text = JSON.stringify(result.data).toLowerCase();
+        if (text.includes("property agent") || text.includes("real estate investment")) {
+          return { valid: false, error: "Domain contamination: Real estate copy detected in restaurant copy output" };
+        }
+      }
+      return { valid: true };
+    }
+
+    if (step.agentId === "web-coding-agent") {
+      const hasBuild = Boolean(result.data.preview || result.data.page || result.summary);
+      if (!hasBuild) {
+        return { valid: false, error: "Web/Coding Agent produced no page, preview, or summary" };
+      }
+      if (result.data.page) {
+        const page = result.data.page as any;
+        if (page.organization_id && page.organization_id !== context.organizationId) {
+          return { valid: false, error: "Security violation: Page organization_id does not match execution tenant" };
+        }
+      }
+      if (topic.includes("restaurant") || topic.includes("cafe")) {
+        const text = JSON.stringify(result.data).toLowerCase();
+        if (text.includes("property agent") || text.includes("condominium")) {
+          return { valid: false, error: "Domain contamination: Property elements detected in restaurant website" };
+        }
+      }
+      return { valid: true };
+    }
+
+    if (step.agentId === "research-agent") {
+      const hasResearch = Boolean(result.data.painPoints || result.data.competitorGaps || result.summary);
+      if (!hasResearch) {
+        return { valid: false, error: "Research Agent returned empty market intelligence" };
+      }
+      return { valid: true };
+    }
+
+    if (step.agentId === "marketing-agent") {
+      const hasMarketing = Boolean(result.data.positioning || result.data.valueProposition || result.summary);
+      if (!hasMarketing) {
+        return { valid: false, error: "Marketing Agent returned empty positioning strategy" };
+      }
+      return { valid: true };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Persists record to ExecutionHistoryService and generates CanonicalExecutionObject.
    */
   private logExecutionHistory(
     plan: ExecutionPlan,
@@ -747,7 +1069,45 @@ export class ElmoOrchestratorService {
     previewPayload: unknown,
     summary: string,
     status: PlanStatus
-  ): void {
+  ): CanonicalExecutionObject {
+    const canonical: CanonicalExecutionObject = {
+      id: plan.id,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      goal: input.message,
+      objective: plan.objective,
+      context: input.companyBrainContext || {},
+      plan,
+      steps: plan.steps,
+      selectedAgents: plan.steps.map((s) => s.agentId),
+      selectedTools: Array.from(new Set(agentResults.flatMap((r) => r.toolsUsed || []))),
+      status: status as any,
+      currentStep: plan.steps.filter((s) => s.status === "COMPLETED").length,
+      approvalState: plan.approvalRequirements
+        ? {
+            required: true,
+            status:
+              status === "WAITING_FOR_APPROVAL" || (status as string) === "AWAITING_APPROVAL"
+                ? "PENDING"
+                : status === "CANCELLED"
+                ? "REJECTED"
+                : "APPROVED",
+            details: plan.approvalRequirements,
+          }
+        : undefined,
+      verificationState: {
+        status: status === "COMPLETED" ? "PASSED" : status === "FAILED" ? "FAILED" : "PENDING",
+      },
+      retryCount,
+      replanCount: 0,
+      result: { summary },
+      createdAt: startTime,
+      updatedAt: Date.now(),
+      completedAt:
+        status === "COMPLETED" || status === "FAILED" || status === "CANCELLED" ? Date.now() : undefined,
+    };
+
     try {
       this.historyService.recordExecution({
         executionId: plan.executionId,
@@ -768,20 +1128,20 @@ export class ElmoOrchestratorService {
         approvalStatus: plan.approvalRequirements ? "REQUESTED" : "NONE",
       });
     } catch {
-      // Non-blocking audit logger
+      // Non-blocking
     }
+
+    return canonical;
   }
 
   /**
    * Synthesizes step results into a polished, unified executive response.
    */
   private synthesizePlanResponse(plan: ExecutionPlan, results: AgentResult[]): string {
-    // If only one agent ran, return its clear summary directly
     if (results.length === 1) {
       return results[0].summary;
     }
 
-    // For multi-agent workflows, present the cohesive result
     let res = `I have completed the end-to-end execution for **"${plan.objective}"**:\n\n`;
 
     results.forEach((r) => {

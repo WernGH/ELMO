@@ -264,21 +264,14 @@ export class ElmoIntentService {
 
     // =========================================================================
     // 6. Natural Language Website & Section Editing / Modifications (Code-Switching Supported)
-    // Examples:
-    // - "Make the landing page more premium and mobile friendly"
-    // - "Make the headline lebih premium and fokus on property agents"
-    // - "Change the CTA to Book a Consultation"
-    // - "Target property agents" / "fokus on property agents"
-    // - "Make it more premium"
-    // - "Make it mobile friendly"
     // =========================================================================
     const isEditingOrModifying =
-      /\b(make the hero|change the cta|make this mobile|move testimonials|shorten the headline|add a lead form|more premium|lebih premium|more modern|responsive|mobile friendly|jadikan responsif)\b/i.test(
+      /\b(make the hero|change the cta|make this mobile|move testimonials|shorten the headline|add a lead form|add a booking form|add testimonials|remove pricing|suitable for a restaurant|target b2b|darker style|more premium|lebih premium|more modern|responsive|mobile friendly|jadikan responsif|connect form|publish|rollback)\b/i.test(
         lower
       ) ||
       /\b(edit page|modify section|update layout|change styling|tukarkan cta)\b/i.test(lower) ||
       /^(target|fokus on|focus on|sasaran)\s+([^,.]+)/i.test(lower) ||
-      /^(make it|jadikan ia)\s+(more premium|lebih premium|mobile friendly|responsif)/i.test(lower);
+      /^(make it|jadikan ia)\s+(more premium|lebih premium|mobile friendly|responsif|mobile-first)/i.test(lower);
 
     if (isEditingOrModifying) {
       const entities: ExtractedIntentEntities = { topic: raw };
@@ -290,7 +283,7 @@ export class ElmoIntentService {
       }
 
       // Extract style modifications
-      if (lower.includes("premium") || lower.includes("dark mode")) {
+      if (lower.includes("premium") || lower.includes("dark mode") || lower.includes("darker")) {
         entities.style = "premium";
       }
 
@@ -320,19 +313,16 @@ export class ElmoIntentService {
     }
 
     // =========================================================================
-    // 7. Page / Website Creation (WORKFLOW)
-    // Examples:
-    // - "Build me a landing page for my AI business targeting property agents"
-    // - "ELMO, buat landing page untuk property agent"
-    // - "Bina landing page untuk ejen hartanah dengan tawaran percuma"
+    // 7. Page / Website / Application Creation (WORKFLOW)
     // =========================================================================
     if (
-      /\b(create|build|make|add|bina|buat|tambah)\b\s+(a\s+)?(new\s+)?.*(landing page|sales page|opt-in page|checkout page|thank you page|halaman|page|website|laman web)/i.test(
+      /\b(create|build|make|add|bina|buat|tambah)\b\s+(a\s+)?(new\s+)?.*(landing page|sales page|opt-in page|checkout page|thank you page|halaman|page|website|laman web|dashboard|crm|portal|admin panel|internal tool|web app|web application)/i.test(
         lower
       )
     ) {
       const entities: ExtractedIntentEntities = {};
-      if (lower.includes("landing")) entities.pageType = "landing";
+      if (lower.includes("dashboard") || lower.includes("crm") || lower.includes("portal") || lower.includes("admin panel") || lower.includes("internal tool") || lower.includes("web app")) entities.pageType = "custom";
+      else if (lower.includes("landing")) entities.pageType = "landing";
       else if (lower.includes("sales")) entities.pageType = "sales";
       else if (lower.includes("opt-in") || lower.includes("optin")) entities.pageType = "opt-in";
       else if (lower.includes("checkout")) entities.pageType = "checkout";

@@ -60,7 +60,9 @@ export class CopyAgent {
       testimonial: {
         quote: "ELMO completely transformed our client acquisition. We booked 3x more appointments in our first month.",
         author: "Marcus Vance",
-        role: "Managing Director, Apex Properties",
+        role: targetAudience.toLowerCase().includes("property")
+          ? "Managing Director, Apex Properties"
+          : `Managing Director, ${topic} Solutions`,
       },
     };
 

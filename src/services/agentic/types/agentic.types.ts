@@ -109,13 +109,11 @@ export interface AgentResult {
 // 4. Execution Plan & Risk-Based Approval System
 // ============================================================================
 
-export type PlanStatus =
+export type ExecutionState =
   | "CREATED"
   | "PLANNING"
-  | "PENDING"
-  | "IN_PROGRESS"
   | "WAITING_FOR_INPUT"
-  | "AWAITING_APPROVAL"
+  | "WAITING_FOR_APPROVAL"
   | "EXECUTING"
   | "VERIFYING"
   | "RETRYING"
@@ -123,6 +121,41 @@ export type PlanStatus =
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED";
+
+export type PlanStatus = ExecutionState | "PENDING" | "IN_PROGRESS";
+
+export interface CanonicalExecutionObject {
+  id: string;
+  organizationId: string;
+  userId: string;
+  conversationId?: string;
+  goal: string;
+  objective: string;
+  context: Record<string, unknown>;
+  plan: ExecutionPlan;
+  steps: ExecutionStep[];
+  selectedAgents: string[];
+  selectedTools: string[];
+  status: ExecutionState;
+  currentStep: number;
+  approvalState?: {
+    required: boolean;
+    status: "NONE" | "PENDING" | "APPROVED" | "REJECTED" | "MODIFIED";
+    details?: PendingApprovalDetails;
+  };
+  verificationState?: {
+    status: "PENDING" | "PASSED" | "FAILED";
+    details?: Record<string, unknown>;
+    errors?: string[];
+  };
+  retryCount: number;
+  replanCount: number;
+  result?: Record<string, unknown>;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
 
 export type StepStatus =
   | "PENDING"
@@ -158,6 +191,7 @@ export interface ExecutionStep {
 }
 
 export interface PendingApprovalDetails {
+  approvalId?: string;
   stepId: string;
   agentId: string;
   actionTitle: string;
@@ -315,6 +349,8 @@ export interface WebsiteProject {
   name: string;
   slug: string;
   description: string;
+  projectType?: ProjectType;
+  projectContext?: ProjectContext;
   styles: WebsiteStyleConfig;
   pages: WebsitePageModel[];
   activeVersion: number;
@@ -354,4 +390,111 @@ export interface PreviewPayload {
   sections: WebsiteSectionModel[];
   viewportOptions: Array<"desktop" | "tablet" | "mobile">;
   generatedAt: number;
+}
+
+// ============================================================================
+// 7. Phase 3 Web Project Engine & Application Builder Types
+// ============================================================================
+
+export type ProjectType =
+  | "Landing Page"
+  | "Sales Page"
+  | "Lead Generation Page"
+  | "Product Page"
+  | "Service Page"
+  | "Corporate Website"
+  | "Business Website"
+  | "Restaurant Website"
+  | "Property Website"
+  | "Insurance Website"
+  | "Coaching Website"
+  | "Portfolio Website"
+  | "Event Website"
+  | "Booking Website"
+  | "Membership Website"
+  | "SaaS Marketing Website"
+  | "E-commerce Website"
+  | "Web Application"
+  | "Dashboard"
+  | "Customer Portal"
+  | "Admin Portal"
+  | "Internal Business Tool"
+  | "CRM Interface"
+  | "Custom Web Project"
+  | (string & {});
+
+export type BrandStyleDirection =
+  | "Premium"
+  | "Minimal"
+  | "Luxury"
+  | "Corporate"
+  | "Modern"
+  | "Futuristic"
+  | "Editorial"
+  | "Bold"
+  | "Professional"
+  | "Playful"
+  | "Technical"
+  | "Conversion-focused"
+  | (string & {});
+
+export interface ProjectContext {
+  projectType: ProjectType;
+  industry: string;
+  businessType: string;
+  businessName: string;
+  targetAudience: string;
+  trafficSource?: string;
+  campaignGoal?: string;
+  conversionGoal?: string;
+  offer?: string;
+  productOrService?: string;
+  pricePosition?: string;
+  awarenessLevel?: string;
+  primaryCTA?: { label: string; url?: string; actionType?: string };
+  secondaryCTA?: { label: string; url?: string; actionType?: string };
+  requiredFeatures: string[];
+  brandStyle: BrandStyleDirection;
+  technicalRequirements: string[];
+  assumptions: string[];
+}
+
+export interface ApplicationSpecification {
+  projectId: string;
+  name: string;
+  type: "Dashboard" | "CRM" | "Customer Portal" | "Admin Portal" | "Internal Tool" | "Custom Application";
+  requirements: string[];
+  userRoles: Array<{ role: string; description: string; permissions: string[] }>;
+  userFlows: Array<{ flowName: string; steps: string[] }>;
+  dataModelRequirements: Array<{
+    entityName: string;
+    fields: Array<{ name: string; type: string; required?: boolean }>;
+  }>;
+  screens: Array<{ id: string; name: string; route: string; description: string }>;
+  components: Array<{ name: string; type: string; purpose: string }>;
+  apiRequirements: Array<{ method: string; path: string; description: string }>;
+  permissions: string[];
+  validationRules: string[];
+  testingPlan: string[];
+}
+
+export interface VisualQAResult {
+  passed: boolean;
+  score: number;
+  checks: Array<{ name: string; passed: boolean; details?: string }>;
+  defects: string[];
+}
+
+export interface FunctionalQAResult {
+  passed: boolean;
+  score: number;
+  checks: Array<{ name: string; passed: boolean; details?: string }>;
+  defects: string[];
+}
+
+export interface QAEvaluationResult {
+  isValid: boolean;
+  visualQA: VisualQAResult;
+  functionalQA: FunctionalQAResult;
+  selfHealedActions?: string[];
 }

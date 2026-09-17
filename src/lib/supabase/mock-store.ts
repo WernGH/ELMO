@@ -47,6 +47,152 @@ export type AnalyticsEventInsert = Database["public"]["Tables"]["analytics_event
 export type CompanyMemoryRow = Database["public"]["Tables"]["company_memories"]["Row"];
 export type CompanyMemoryInsert = Database["public"]["Tables"]["company_memories"]["Insert"];
 
+export interface GoalRow {
+  id: string;
+  organization_id: string;
+  user_id?: string | null;
+  title: string;
+  description?: string | null;
+  metric?: string | null;
+  target?: number | null;
+  current_value?: number;
+  deadline?: string | null;
+  status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" | "BEHIND" | "CANCELLED";
+  related_execution_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+export type GoalInsert = Partial<GoalRow> & { organization_id: string; title: string };
+
+export interface TaskRow {
+  id: string;
+  organization_id: string;
+  goal_id?: string | null;
+  execution_id?: string | null;
+  title: string;
+  description?: string | null;
+  owner_type: "AI" | "HUMAN";
+  owner_name: string;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "BLOCKED" | "CANCELLED";
+  priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  due_date?: string | null;
+  result?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+export type TaskInsert = Partial<TaskRow> & { organization_id: string; title: string };
+
+export interface ActivityRow {
+  id: string;
+  organization_id: string;
+  user_id?: string | null;
+  type: string;
+  actor_name: string;
+  actor_type: "AI" | "HUMAN" | "SYSTEM" | "VISITOR";
+  description: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+export type ActivityInsert = Partial<ActivityRow> & { organization_id: string; type: string; actor_name: string; description: string };
+
+export interface ApprovalRow {
+  id: string;
+  organization_id: string;
+  execution_id?: string | null;
+  step_id?: string | null;
+  action: string;
+  requested_by: string;
+  category: string;
+  risk_level: "Low" | "Medium" | "High";
+  details?: string | null;
+  proposed_changes?: Record<string, unknown> | null;
+  status: "pending" | "approved" | "rejected" | "modified";
+  decision_by?: string | null;
+  decision_notes?: string | null;
+  created_at: string;
+  decided_at?: string | null;
+}
+export type ApprovalInsert = Partial<ApprovalRow> & { organization_id: string; action: string; requested_by: string; category: string; risk_level: "Low" | "Medium" | "High" };
+
+export interface QuoteItem {
+  id?: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  amount: number;
+}
+
+export interface QuoteRow {
+  id: string;
+  organization_id: string;
+  quote_number: string;
+  client_name: string;
+  client_email?: string | null;
+  client_phone?: string | null;
+  status: "draft" | "sent" | "accepted" | "declined" | "paid" | "overdue";
+  issue_date: string;
+  due_date?: string | null;
+  currency: string;
+  subtotal: number;
+  tax_rate: number;
+  tax_amount: number;
+  total_amount: number;
+  payment_terms: string;
+  payment_instructions?: string | null;
+  notes?: string | null;
+  items: QuoteItem[];
+  created_at: string;
+  updated_at: string;
+}
+export type QuoteInsert = Partial<QuoteRow> & { organization_id: string; client_name: string; items: QuoteItem[] };
+
+export interface BookingRow {
+  id: string;
+  organization_id: string;
+  contact_id?: string | null;
+  customer_name: string;
+  customer_email?: string | null;
+  customer_phone?: string | null;
+  service_name: string;
+  booking_time: string;
+  status: "confirmed" | "cancelled" | "completed" | "no_show";
+  reminder_24h_sent: boolean;
+  reminder_2h_sent: boolean;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export type BookingInsert = Partial<BookingRow> & { organization_id: string; customer_name: string; service_name: string; booking_time: string };
+
+export interface ReviewRequestRow {
+  id: string;
+  organization_id: string;
+  contact_id?: string | null;
+  customer_name: string;
+  customer_phone_or_email: string;
+  channel: "whatsapp" | "sms" | "email";
+  status: "pending" | "sent" | "rated_positive" | "intercepted_negative";
+  rating?: number | null;
+  private_feedback?: string | null;
+  google_review_url?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export type ReviewRequestInsert = Partial<ReviewRequestRow> & { organization_id: string; customer_name: string; customer_phone_or_email: string };
+
+export interface SopRow {
+  id: string;
+  organization_id: string;
+  title: string;
+  category: "operations" | "customer_service" | "finance" | "safety" | "onboarding";
+  content: string;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+export type SopInsert = Partial<SopRow> & { organization_id: string; title: string; content: string };
+
 export class MockDataStore {
   private static instance: MockDataStore;
 
@@ -78,6 +224,16 @@ export class MockDataStore {
   public automationActions: Map<string, AutomationActionRow> = new Map();
   public analyticsEvents: Map<string, AnalyticsEventRow> = new Map();
   public memories: Map<string, CompanyMemoryRow> = new Map();
+  public goals: Map<string, GoalRow> = new Map();
+  public tasks: Map<string, TaskRow> = new Map();
+  public activities: Map<string, ActivityRow> = new Map();
+  public approvals: Map<string, ApprovalRow> = new Map();
+
+  // Business Operations Maps
+  public quotes: Map<string, QuoteRow> = new Map();
+  public bookings: Map<string, BookingRow> = new Map();
+  public reviewRequests: Map<string, ReviewRequestRow> = new Map();
+  public sops: Map<string, SopRow> = new Map();
 
   private constructor() {
     this.seedDefaultData();
@@ -118,6 +274,14 @@ export class MockDataStore {
     this.automationActions.clear();
     this.analyticsEvents.clear();
     this.memories.clear();
+    this.goals.clear();
+    this.tasks.clear();
+    this.activities.clear();
+    this.approvals.clear();
+    this.quotes.clear();
+    this.bookings.clear();
+    this.reviewRequests.clear();
+    this.sops.clear();
 
     this.seedDefaultData();
   }
@@ -194,6 +358,9 @@ export class MockDataStore {
   // --- RLS & Security Simulation Helpers ---
 
   public isOrgMember(userId: string, orgId: string): boolean {
+    if (userId === "system-lead-capture" || userId === "system" || userId === "service-role") {
+      return true;
+    }
     const members = Array.from(this.organizationMembers.values());
     for (const member of members) {
       if (member.organization_id === orgId && member.user_id === userId) {
@@ -1152,6 +1319,446 @@ export class MockDataStore {
     const existing = this.memories.get(memoryId);
     if (!existing || existing.organization_id !== organizationId) return false;
     return this.memories.delete(memoryId);
+  }
+
+  // 13. Goals, Tasks, Activities, and Approvals
+  public queryGoalsWithRLS(userId: string, targetOrgId: string): GoalRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.goals.values())
+      .filter((g) => g.organization_id === targetOrgId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public createGoal(data: GoalInsert): GoalRow {
+    const id = data.id || `goal-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: GoalRow = {
+      id,
+      organization_id: data.organization_id,
+      user_id: data.user_id ?? null,
+      title: data.title,
+      description: data.description ?? null,
+      metric: data.metric ?? null,
+      target: data.target ?? null,
+      current_value: data.current_value ?? 0,
+      deadline: data.deadline ?? null,
+      status: data.status ?? "IN_PROGRESS",
+      related_execution_id: data.related_execution_id ?? null,
+      metadata: data.metadata ?? {},
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.goals.set(id, row);
+    return row;
+  }
+
+  public updateGoal(
+    userId: string,
+    organizationId: string,
+    goalId: string,
+    updates: Partial<Omit<GoalRow, "id" | "organization_id" | "created_at">>
+  ): GoalRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.goals.get(goalId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+    const updated: GoalRow = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.goals.set(goalId, updated);
+    return updated;
+  }
+
+  public deleteGoal(userId: string, organizationId: string, goalId: string): boolean {
+    if (!this.isOrgMember(userId, organizationId)) return false;
+    const existing = this.goals.get(goalId);
+    if (!existing || existing.organization_id !== organizationId) return false;
+    return this.goals.delete(goalId);
+  }
+
+  public queryTasksWithRLS(userId: string, targetOrgId: string, goalId?: string): TaskRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.tasks.values())
+      .filter((t) => t.organization_id === targetOrgId && (!goalId || t.goal_id === goalId))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public createTask(data: TaskInsert): TaskRow {
+    const id = data.id || `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: TaskRow = {
+      id,
+      organization_id: data.organization_id,
+      goal_id: data.goal_id ?? null,
+      execution_id: data.execution_id ?? null,
+      title: data.title,
+      description: data.description ?? null,
+      owner_type: data.owner_type ?? "AI",
+      owner_name: data.owner_name ?? "ELMO",
+      status: data.status ?? "PENDING",
+      priority: data.priority ?? "MEDIUM",
+      due_date: data.due_date ?? null,
+      result: data.result ?? null,
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.tasks.set(id, row);
+    return row;
+  }
+
+  public updateTask(
+    userId: string,
+    organizationId: string,
+    taskId: string,
+    updates: Partial<Omit<TaskRow, "id" | "organization_id" | "created_at">>
+  ): TaskRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.tasks.get(taskId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+    const updated: TaskRow = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.tasks.set(taskId, updated);
+    return updated;
+  }
+
+  public deleteTask(userId: string, organizationId: string, taskId: string): boolean {
+    if (!this.isOrgMember(userId, organizationId)) return false;
+    const existing = this.tasks.get(taskId);
+    if (!existing || existing.organization_id !== organizationId) return false;
+    return this.tasks.delete(taskId);
+  }
+
+  public queryActivitiesWithRLS(userId: string, targetOrgId: string, limit = 50): ActivityRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.activities.values())
+      .filter((a) => a.organization_id === targetOrgId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit);
+  }
+
+  public createActivity(data: ActivityInsert): ActivityRow {
+    const id = data.id || `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: ActivityRow = {
+      id,
+      organization_id: data.organization_id,
+      user_id: data.user_id ?? null,
+      type: data.type,
+      actor_name: data.actor_name,
+      actor_type: data.actor_type ?? "AI",
+      description: data.description,
+      metadata: data.metadata ?? {},
+      created_at: data.created_at ?? now,
+    };
+    this.activities.set(id, row);
+    return row;
+  }
+
+  public queryApprovalsWithRLS(userId: string, targetOrgId: string): ApprovalRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.approvals.values())
+      .filter((a) => a.organization_id === targetOrgId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public createApproval(data: ApprovalInsert): ApprovalRow {
+    const id = data.id || `appr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: ApprovalRow = {
+      id,
+      organization_id: data.organization_id,
+      execution_id: data.execution_id ?? null,
+      step_id: data.step_id ?? null,
+      action: data.action,
+      requested_by: data.requested_by,
+      category: data.category,
+      risk_level: data.risk_level,
+      details: data.details ?? null,
+      proposed_changes: data.proposed_changes ?? null,
+      status: data.status ?? "pending",
+      decision_by: data.decision_by ?? null,
+      decision_notes: data.decision_notes ?? null,
+      created_at: data.created_at ?? now,
+      decided_at: data.decided_at ?? null,
+    };
+    this.approvals.set(id, row);
+    return row;
+  }
+
+  public updateApproval(
+    userId: string,
+    organizationId: string,
+    approvalId: string,
+    updates: Partial<Omit<ApprovalRow, "id" | "organization_id" | "created_at">>
+  ): ApprovalRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.approvals.get(approvalId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+    const updated: ApprovalRow = {
+      ...existing,
+      ...updates,
+      decided_at: updates.status && updates.status !== "pending" ? new Date().toISOString() : existing.decided_at,
+    };
+    this.approvals.set(approvalId, updated);
+    return updated;
+  }
+
+  // ==========================================
+  // Quotes Methods
+  // ==========================================
+  public queryQuotesWithRLS(userId: string, targetOrgId: string): QuoteRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.quotes.values())
+      .filter((q) => q.organization_id === targetOrgId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public getPublicQuoteById(quoteId: string): QuoteRow | null {
+    return this.quotes.get(quoteId) || null;
+  }
+
+  public createQuote(data: QuoteInsert): QuoteRow {
+    const id = data.id || `quote-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const count = this.quotes.size + 1;
+    const quoteNumber = data.quote_number || `QT-${new Date().getFullYear()}-${String(count).padStart(4, "0")}`;
+
+    const items = data.items || [];
+    const subtotal = data.subtotal !== undefined
+      ? data.subtotal
+      : items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    const taxRate = data.tax_rate ?? 0;
+    const taxAmount = data.tax_amount ?? (subtotal * (taxRate / 100));
+    const totalAmount = data.total_amount ?? (subtotal + taxAmount);
+
+    const row: QuoteRow = {
+      id,
+      organization_id: data.organization_id,
+      quote_number: quoteNumber,
+      client_name: data.client_name,
+      client_email: data.client_email ?? null,
+      client_phone: data.client_phone ?? null,
+      status: data.status ?? "draft",
+      issue_date: data.issue_date ?? now,
+      due_date: data.due_date ?? null,
+      currency: data.currency ?? "USD",
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+      payment_terms: data.payment_terms ?? "Net 14",
+      payment_instructions: data.payment_instructions ?? null,
+      notes: data.notes ?? null,
+      items,
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.quotes.set(id, row);
+    return row;
+  }
+
+  public updateQuote(
+    userId: string,
+    organizationId: string,
+    quoteId: string,
+    updates: Partial<QuoteRow>
+  ): QuoteRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.quotes.get(quoteId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+
+    let subtotal = updates.subtotal ?? existing.subtotal;
+    let taxRate = updates.tax_rate ?? existing.tax_rate;
+    if (updates.items) {
+      subtotal = updates.items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    }
+    const taxAmount = updates.tax_amount ?? (subtotal * (taxRate / 100));
+    const totalAmount = updates.total_amount ?? (subtotal + taxAmount);
+
+    const updated: QuoteRow = {
+      ...existing,
+      ...updates,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+      updated_at: new Date().toISOString(),
+    };
+    this.quotes.set(quoteId, updated);
+    return updated;
+  }
+
+  public updatePublicQuoteStatus(quoteId: string, status: "accepted" | "declined"): QuoteRow | null {
+    const existing = this.quotes.get(quoteId);
+    if (!existing) return null;
+    const updated: QuoteRow = {
+      ...existing,
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    this.quotes.set(quoteId, updated);
+    return updated;
+  }
+
+  // ==========================================
+  // Bookings Methods
+  // ==========================================
+  public queryBookingsWithRLS(userId: string, targetOrgId: string): BookingRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.bookings.values())
+      .filter((b) => b.organization_id === targetOrgId)
+      .sort((a, b) => new Date(a.booking_time).getTime() - new Date(b.booking_time).getTime());
+  }
+
+  public createBooking(data: BookingInsert): BookingRow {
+    const id = data.id || `book-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: BookingRow = {
+      id,
+      organization_id: data.organization_id,
+      contact_id: data.contact_id ?? null,
+      customer_name: data.customer_name,
+      customer_email: data.customer_email ?? null,
+      customer_phone: data.customer_phone ?? null,
+      service_name: data.service_name,
+      booking_time: data.booking_time,
+      status: data.status ?? "confirmed",
+      reminder_24h_sent: data.reminder_24h_sent ?? false,
+      reminder_2h_sent: data.reminder_2h_sent ?? false,
+      notes: data.notes ?? null,
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.bookings.set(id, row);
+    return row;
+  }
+
+  public updateBooking(
+    userId: string,
+    organizationId: string,
+    bookingId: string,
+    updates: Partial<BookingRow>
+  ): BookingRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.bookings.get(bookingId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+    const updated: BookingRow = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.bookings.set(bookingId, updated);
+    return updated;
+  }
+
+  // ==========================================
+  // Review Requests Methods
+  // ==========================================
+  public queryReviewsWithRLS(userId: string, targetOrgId: string): ReviewRequestRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.reviewRequests.values())
+      .filter((r) => r.organization_id === targetOrgId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public getPublicReviewRequestById(requestId: string): ReviewRequestRow | null {
+    return this.reviewRequests.get(requestId) || null;
+  }
+
+  public createReviewRequest(data: ReviewRequestInsert): ReviewRequestRow {
+    const id = data.id || `rev-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: ReviewRequestRow = {
+      id,
+      organization_id: data.organization_id,
+      contact_id: data.contact_id ?? null,
+      customer_name: data.customer_name,
+      customer_phone_or_email: data.customer_phone_or_email,
+      channel: data.channel ?? "whatsapp",
+      status: data.status ?? "pending",
+      rating: data.rating ?? null,
+      private_feedback: data.private_feedback ?? null,
+      google_review_url: data.google_review_url ?? null,
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.reviewRequests.set(id, row);
+    return row;
+  }
+
+  public submitPublicReviewFeedback(
+    requestId: string,
+    rating: number,
+    feedback?: string
+  ): ReviewRequestRow | null {
+    const existing = this.reviewRequests.get(requestId);
+    if (!existing) return null;
+    const status = rating >= 4 ? "rated_positive" : "intercepted_negative";
+    const updated: ReviewRequestRow = {
+      ...existing,
+      rating,
+      status,
+      private_feedback: feedback ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    this.reviewRequests.set(requestId, updated);
+    return updated;
+  }
+
+  // ==========================================
+  // SOPs Methods
+  // ==========================================
+  public querySopsWithRLS(userId: string, targetOrgId: string): SopRow[] {
+    if (!this.isOrgMember(userId, targetOrgId)) return [];
+    return Array.from(this.sops.values())
+      .filter((s) => s.organization_id === targetOrgId)
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  public createSop(data: SopInsert): SopRow {
+    const id = data.id || `sop-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: SopRow = {
+      id,
+      organization_id: data.organization_id,
+      title: data.title,
+      category: data.category ?? "operations",
+      content: data.content,
+      tags: data.tags ?? [],
+      created_at: data.created_at ?? now,
+      updated_at: data.updated_at ?? now,
+    };
+    this.sops.set(id, row);
+    return row;
+  }
+
+  public updateSop(
+    userId: string,
+    organizationId: string,
+    sopId: string,
+    updates: Partial<SopRow>
+  ): SopRow | null {
+    if (!this.isOrgMember(userId, organizationId)) return null;
+    const existing = this.sops.get(sopId);
+    if (!existing || existing.organization_id !== organizationId) return null;
+    const updated: SopRow = {
+      ...existing,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    this.sops.set(sopId, updated);
+    return updated;
+  }
+
+  public deleteSop(userId: string, organizationId: string, sopId: string): boolean {
+    if (!this.isOrgMember(userId, organizationId)) return false;
+    const existing = this.sops.get(sopId);
+    if (!existing || existing.organization_id !== organizationId) return false;
+    return this.sops.delete(sopId);
   }
 }
 

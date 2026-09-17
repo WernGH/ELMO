@@ -122,6 +122,31 @@ export class PageService {
     }
   }
 
+  public async getPublicPageBySlug(slug: string): Promise<{ page: PageRow | null; organizationId: string | null }> {
+    try {
+      if (isSupabaseConfigured()) {
+        const supabase = createBrowserSupabase();
+        const { data } = await (supabase.from("pages") as any)
+          .select("*")
+          .eq("slug", slug)
+          .maybeSingle();
+
+        if (data) {
+          return { page: data as PageRow, organizationId: data.organization_id };
+        }
+      }
+
+      const allPages = Array.from(this.store.pages.values());
+      const found = allPages.find((p) => p.slug === slug);
+      if (found) {
+        return { page: found, organizationId: found.organization_id };
+      }
+      return { page: null, organizationId: null };
+    } catch {
+      return { page: null, organizationId: null };
+    }
+  }
+
   public async createPage(params: CreatePageParams): Promise<ServiceResult<PageRow>> {
     try {
       if (!params.name?.trim()) {

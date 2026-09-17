@@ -120,11 +120,28 @@ export type AnalyticsEventType =
 export type MemoryScope = "organization" | "agent_private" | "task_context" | "user" | "customer";
 export type MemoryCategory =
   | "business"
-  | "funnel"
-  | "decision"
-  | "goal"
+  | "company"
+  | "brand"
+  | "products"
+  | "services"
+  | "customers"
   | "customer"
+  | "target audience"
+  | "offers"
+  | "marketing"
+  | "sales"
+  | "operations"
+  | "goals"
+  | "goal"
+  | "processes"
+  | "employees"
+  | "AI workforce"
+  | "decisions"
+  | "decision"
+  | "documents"
+  | "preferences"
   | "preference"
+  | "funnel"
   | "user_profile"
   | "person"
   | "project"
@@ -135,7 +152,8 @@ export type MemoryCategory =
   | "experience"
   | "learning"
   | "routine"
-  | "relationship";
+  | "relationship"
+  | (string & {});
 
 export type MemoryStatus = "active" | "superseded" | "archived" | "expired" | "deleted";
 export type MemoryConfidenceLevel = "low" | "medium" | "high" | "confirmed";

@@ -489,7 +489,7 @@ export class GeminiService {
   /**
    * Executive persona fallback for local development, offline runs, and automated testing
    */
-  private generateExecutiveFallbackResponse(prompt: string, history?: GeminiMessageInput[]): string {
+  public generateExecutiveFallbackResponse(prompt: string, history?: GeminiMessageInput[]): string {
     // Handle structured JSON requests in fallback mode
     if (prompt.includes("valid JSON") || prompt.trim().startsWith("{")) {
       const jsonMatch = prompt.match(/\{[\s\S]*?\}/);

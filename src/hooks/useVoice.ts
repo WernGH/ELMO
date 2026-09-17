@@ -170,6 +170,12 @@ export function useVoice(options: UseVoiceOptions = {}) {
     }
   }, []);
 
+  const abortListening = useCallback(() => {
+    if (voiceServiceRef.current) {
+      voiceServiceRef.current.abortListening();
+    }
+  }, []);
+
   const stopSpeaking = useCallback(() => {
     if (voiceServiceRef.current) {
       voiceServiceRef.current.stopSpeaking();
@@ -242,6 +248,7 @@ export function useVoice(options: UseVoiceOptions = {}) {
     isTTSSupported,
     startListening,
     stopListening,
+    abortListening,
     stopSpeaking,
     speak,
     waitUntilSpoken,

@@ -40,15 +40,13 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
     name: "Tasks",
     href: "/tasks",
     iconName: "CheckSquare",
-    badge: "Soon",
-    isFuture: true,
+    isFuture: false,
   },
   {
     name: "Goals",
     href: "/goals",
     iconName: "Target",
-    badge: "Soon",
-    isFuture: true,
+    isFuture: false,
   },
   {
     name: "Memory",
@@ -75,20 +73,56 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
     name: "Approvals",
     href: "/approvals",
     iconName: "ShieldAlert",
-    badge: "Soon",
-    isFuture: true,
+    isFuture: false,
   },
   {
     name: "Activity",
     href: "/activity",
     iconName: "Activity",
-    badge: "Soon",
-    isFuture: true,
+    isFuture: false,
   },
   {
     name: "Settings",
     href: "/settings",
     iconName: "Settings",
+    isFuture: false,
+  },
+];
+
+export const BUSINESS_OPERATIONS_NAV_ITEMS: NavigationItem[] = [
+  {
+    name: "Quotes & Invoicing",
+    href: "/quotes",
+    iconName: "Receipt",
+    badge: "Ops",
+    isFuture: false,
+  },
+  {
+    name: "Bookings",
+    href: "/bookings",
+    iconName: "CalendarCheck",
+    badge: "Ops",
+    isFuture: false,
+  },
+  {
+    name: "Reviews & Reputation",
+    href: "/reviews",
+    iconName: "Star",
+    badge: "Ops",
+    isFuture: false,
+  },
+  {
+    name: "Customer Win-Back",
+    href: "/winback",
+    iconName: "UserCheck",
+    badge: "Ops",
+    isFuture: false,
+  },
+  {
+    name: "Staff SOPs",
+    href: "/sops",
+    iconName: "BookOpen",
+    badge: "Ops",
     isFuture: false,
   },
 ];
