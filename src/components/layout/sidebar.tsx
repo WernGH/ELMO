@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -15,6 +16,7 @@ import {
   Activity,
   Settings,
   ChevronRight,
+  ChevronDown,
   Radio,
   Filter,
   FormInput,
@@ -54,6 +56,35 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 
 export function Sidebar() {
   const pathname = usePathname();
+
+  // Automatically show if the user actively navigated to one of the Business Ops routes
+  const isInsideBusinessOps = BUSINESS_OPERATIONS_NAV_ITEMS.some(
+    (item) => pathname === item.href || pathname?.startsWith(`${item.href}/`)
+  );
+
+  // Default to hidden on dashboard, persisted in localStorage
+  const [showBusinessOps, setShowBusinessOps] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("elmo_show_business_ops");
+      if (saved !== null) {
+        setShowBusinessOps(saved === "true");
+      }
+    } catch {}
+  }, []);
+
+  const toggleBusinessOps = () => {
+    setShowBusinessOps((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("elmo_show_business_ops", String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const isBusinessOpsVisible = showBusinessOps || isInsideBusinessOps;
 
   return (
     <aside className="w-64 flex-shrink-0 bg-[#050811] border-r border-[#121E33] flex flex-col h-screen select-none relative z-20">
@@ -151,49 +182,67 @@ export function Sidebar() {
           );
         })}
 
-        {/* Business Operations Suite */}
-        <div className="px-3 pb-1 pt-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500/80">
-          Business Operations
-        </div>
-        {BUSINESS_OPERATIONS_NAV_ITEMS.map((item) => {
-          const Icon = iconMap[item.iconName] || LayoutDashboard;
-          const isActive =
-            pathname === item.href || pathname?.startsWith(`${item.href}/`);
+        {/* Business Operations Suite (Collapsible / Hidden on Dashboard by default) */}
+        <button
+          type="button"
+          onClick={toggleBusinessOps}
+          className="w-full flex items-center justify-between px-3 pb-1 pt-3 text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500/80 hover:text-amber-400 transition-colors group cursor-pointer"
+          title={isBusinessOpsVisible ? "Collapse Business Operations" : "Expand Business Operations"}
+        >
+          <div className="flex items-center gap-1.5">
+            <span>Business Operations</span>
+            <span className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400/80 border border-amber-500/20 font-mono tracking-normal">
+              {isBusinessOpsVisible ? "VISIBLE" : "HIDDEN"}
+            </span>
+          </div>
+          <ChevronDown
+            className={cn(
+              "w-3.5 h-3.5 transition-transform duration-200",
+              isBusinessOpsVisible ? "rotate-180 text-amber-400" : "text-amber-500/60 group-hover:text-amber-400"
+            )}
+          />
+        </button>
 
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={cn(
-                "group relative flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
-                isActive
-                  ? "bg-gradient-to-r from-amber-950/60 to-orange-950/40 text-amber-200 border border-amber-400/40 shadow-[0_0_20px_rgba(245,158,11,0.25)] font-semibold"
-                  : "text-zinc-400 hover:text-zinc-100 hover:bg-[#0A1324]/80 border border-transparent"
-              )}
-            >
-              {isActive && (
-                <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-amber-400 rounded-r shadow-[0_0_12px_rgba(245,158,11,1)]" />
-              )}
-              <div className="flex items-center gap-3">
-                <Icon
-                  className={cn(
-                    "w-4 h-4 transition-colors",
-                    isActive ? "text-amber-400" : "text-zinc-500 group-hover:text-zinc-300"
-                  )}
-                />
-                <span className="font-sans">{item.name}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {item.badge && (
-                  <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
-                    {item.badge}
-                  </span>
+        {isBusinessOpsVisible &&
+          BUSINESS_OPERATIONS_NAV_ITEMS.map((item) => {
+            const Icon = iconMap[item.iconName] || LayoutDashboard;
+            const isActive =
+              pathname === item.href || pathname?.startsWith(`${item.href}/`);
+
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={cn(
+                  "group relative flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200",
+                  isActive
+                    ? "bg-gradient-to-r from-amber-950/60 to-orange-950/40 text-amber-200 border border-amber-400/40 shadow-[0_0_20px_rgba(245,158,11,0.25)] font-semibold"
+                    : "text-zinc-400 hover:text-zinc-100 hover:bg-[#0A1324]/80 border border-transparent"
                 )}
-                {isActive && <ChevronRight className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-              </div>
-            </Link>
-          );
-        })}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-amber-400 rounded-r shadow-[0_0_12px_rgba(245,158,11,1)]" />
+                )}
+                <div className="flex items-center gap-3">
+                  <Icon
+                    className={cn(
+                      "w-4 h-4 transition-colors",
+                      isActive ? "text-amber-400" : "text-zinc-500 group-hover:text-zinc-300"
+                    )}
+                  />
+                  <span className="font-sans">{item.name}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {item.badge && (
+                    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono font-medium bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                      {item.badge}
+                    </span>
+                  )}
+                  {isActive && <ChevronRight className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                </div>
+              </Link>
+            );
+          })}
 
         {/* Command Matrix */}
         <div className="px-3 pb-1 pt-3 text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500">

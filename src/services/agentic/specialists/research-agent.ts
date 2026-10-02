@@ -4,13 +4,17 @@
 
 import { AgentMessage, AgentResult } from "../types/agentic.types";
 import { ElmoMemoryService } from "@/services/elmo-memory.service";
+import { KnowledgeRetrievalService } from "@/services/knowledge/knowledge-retrieval.service";
+import { KnowledgeContext } from "@/types/knowledge.types";
 
 export class ResearchAgent {
   private static instance: ResearchAgent;
   private memoryService: ElmoMemoryService;
+  private knowledgeService: KnowledgeRetrievalService;
 
   private constructor() {
     this.memoryService = ElmoMemoryService.getInstance();
+    this.knowledgeService = KnowledgeRetrievalService.getInstance();
   }
 
   public static getInstance(): ResearchAgent {
@@ -25,7 +29,30 @@ export class ResearchAgent {
     const targetAudience = (message.input.targetAudience as string) || "General target audience";
     const orgId = (message.context.organizationId as string) || "default-org";
 
-    // Check company memory for past research or audience insights
+    // 1. Check knowledge retrieval / RAG
+    const toolsUsed: string[] = ["query_memory"];
+    let knowledgeCtx: KnowledgeContext | undefined = message.context?.knowledgeContext as KnowledgeContext;
+    if (!knowledgeCtx) {
+      try {
+        knowledgeCtx = await this.knowledgeService.retrieve({
+          query: `${targetAudience} ${topic}`,
+          organizationId: orgId,
+          topK: 3,
+        });
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    const retrievedSnippets: string[] = [];
+    if (knowledgeCtx && knowledgeCtx.chunks && knowledgeCtx.chunks.length > 0) {
+      toolsUsed.push("search_knowledge");
+      for (const chunk of knowledgeCtx.chunks) {
+        retrievedSnippets.push(chunk.content);
+      }
+    }
+
+    // 2. Check company memory for past research or audience insights
     const memoryEntries = await this.memoryService.searchRelevantMemory(
       orgId,
       `${targetAudience} ${topic}`,
@@ -33,7 +60,8 @@ export class ResearchAgent {
       3
     );
 
-    const existingInsights = memoryEntries.map((m) => m.content).join("; ") || "";
+    const memoryInsights = memoryEntries.map((m) => m.content).join("; ");
+    const existingInsights = [memoryInsights, ...retrievedSnippets].filter(Boolean).join("; ");
 
     const painPoints = [
       `Struggling with inconsistent lead generation and manual client follow-up`,
@@ -88,8 +116,17 @@ export class ResearchAgent {
             : `Extracted pain points and target outcome profile for ${targetAudience}`,
           status: "SUCCESS",
         },
+        ...(toolsUsed.includes("search_knowledge")
+          ? [
+              {
+                action: "KNOWLEDGE_RETRIEVAL",
+                description: `Retrieved grounded business context chunks for ${targetAudience}`,
+                status: "SUCCESS" as const,
+              },
+            ]
+          : []),
       ],
-      toolsUsed: ["query_memory"],
+      toolsUsed,
       needsMoreWork: false,
       nextSuggestedAgent: "marketing-agent",
       confidence: 0.95,

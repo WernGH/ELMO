@@ -131,6 +131,10 @@ export class ContactService {
     }
   }
 
+  public async createContact(params: CreateContactParams): Promise<ServiceResult<ContactWithTags>> {
+    return this.findOrCreateContact(params);
+  }
+
   public async findOrCreateContact(params: CreateContactParams): Promise<ServiceResult<ContactWithTags>> {
     try {
       const cleanEmail = params.email?.toLowerCase().trim();

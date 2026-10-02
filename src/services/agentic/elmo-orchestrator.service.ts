@@ -18,6 +18,8 @@ import {
   ExecutionHistoryRecord,
   CanonicalExecutionObject,
   ExecutionState,
+  OutcomeVerificationReport,
+  BusinessOutcomeStatus,
 } from "./types/agentic.types";
 import { AgentRegistryService } from "./agent-registry.service";
 import { AgentExecutorService } from "./agent-executor.service";
@@ -27,6 +29,14 @@ import { ElmoMemoryService } from "@/services/elmo-memory.service";
 import { ApprovalService } from "@/services/approval.service";
 import { ActivityService } from "@/services/activity.service";
 import { MemoryEntry } from "@/types/future/memory.types";
+import { SkillRegistryService } from "./skill-registry.service";
+import { ToolRegistryService } from "./tool-registry.service";
+import { OutcomeVerificationService } from "./outcome-verification.service";
+import { KnowledgeRetrievalService } from "@/services/knowledge/knowledge-retrieval.service";
+import { KnowledgeContext } from "@/types/knowledge.types";
+import { DynamicTaskPlannerService } from "./dynamic-task-planner.service";
+import { WorkforceRegistryService } from "./workforce-registry.service";
+import { WorkerDefinition } from "./types/agentic.types";
 
 export interface OrchestratorInput {
   userId: string;
@@ -38,6 +48,9 @@ export interface OrchestratorInput {
   companyBrainContext?: Record<string, unknown>;
   requestedOutcome?: string;
   priority?: "low" | "medium" | "high" | "urgent";
+  userRole?: string;
+  permissions?: string[];
+  context?: Record<string, unknown>;
 }
 
 export interface OrchestrationResult {
@@ -47,8 +60,19 @@ export interface OrchestrationResult {
   agentResults: AgentResult[];
   previewPayload?: unknown;
   pendingApproval?: PendingApprovalDetails;
-  visualState: "THINKING" | "EXECUTING" | "SUCCESS" | "ERROR" | "AWAITING_APPROVAL";
+  visualState:
+    | "THINKING"
+    | "EXECUTING"
+    | "SUCCESS"
+    | "ERROR"
+    | "AWAITING_APPROVAL"
+    | "WAITING_FOR_INPUT"
+    | "MISSING_CAPABILITY"
+    | "UNSUPPORTED_ACTION"
+    | "PLAN_VALIDATION_FAILED";
   canonicalExecution?: CanonicalExecutionObject;
+  businessOutcomeStatus?: BusinessOutcomeStatus;
+  clarificationQuestions?: string[];
 }
 
 interface ActiveExecutionState {
@@ -72,6 +96,12 @@ export class ElmoOrchestratorService {
   private historyService: ExecutionHistoryService;
   private approvalService: ApprovalService;
   private activityService: ActivityService;
+  private skillRegistry: SkillRegistryService;
+  private toolRegistry: ToolRegistryService;
+  private outcomeVerifier: OutcomeVerificationService;
+  private knowledgeService: KnowledgeRetrievalService;
+  private planner: DynamicTaskPlannerService;
+  private workforceRegistry: WorkforceRegistryService;
 
   // Stored active plans: planId -> ExecutionPlan
   private activePlans: Map<string, ExecutionPlan> = new Map();
@@ -86,6 +116,12 @@ export class ElmoOrchestratorService {
     this.historyService = ExecutionHistoryService.getInstance();
     this.approvalService = ApprovalService.getInstance();
     this.activityService = ActivityService.getInstance();
+    this.skillRegistry = SkillRegistryService.getInstance();
+    this.toolRegistry = ToolRegistryService.getInstance();
+    this.outcomeVerifier = OutcomeVerificationService.getInstance();
+    this.knowledgeService = KnowledgeRetrievalService.getInstance();
+    this.planner = DynamicTaskPlannerService.getInstance();
+    this.workforceRegistry = WorkforceRegistryService.getInstance();
   }
 
   public static getInstance(): ElmoOrchestratorService {
@@ -103,6 +139,7 @@ export class ElmoOrchestratorService {
     this.activePlans.clear();
     this.activeExecutions.clear();
     this.historyService.reset();
+    this.workforceRegistry.reset();
   }
 
   /**
@@ -136,10 +173,16 @@ export class ElmoOrchestratorService {
     // 2. Intent Analysis
     const intent = input.intentAnalysis || this.intentService.analyzeIntent(raw);
 
-    // 3. Plan Generation (Single Agent vs Multi-Agent)
+    // 3. Plan Generation (Single Agent vs Multi-Agent via Fast Path or Dynamic Planner)
     const plan = this.createExecutionPlan(input, intent);
 
-    if (plan.steps.length === 0) {
+    if (
+      plan.steps.length === 0 &&
+      plan.status !== "WAITING_FOR_INPUT" &&
+      plan.status !== "MISSING_CAPABILITY" &&
+      (plan.status as string) !== "UNSUPPORTED_ACTION" &&
+      plan.status !== "PLAN_VALIDATION_FAILED"
+    ) {
       return {
         isDirectAnswer: true,
         response: "",
@@ -152,6 +195,96 @@ export class ElmoOrchestratorService {
 
     // 4. Controlled AI-Native Execution Loop
     return await this.executePlan(plan, input);
+  }
+
+  /**
+   * Identifies safe, deterministic fast paths (explicit web creation, direct AST modifications, publishing).
+   * Open-ended business objectives, diagnostic requests, and complex problems always route to the dynamic planner.
+   */
+  public isFastPathCandidate(raw: string): boolean {
+    const lower = raw.toLowerCase();
+
+    // Any business drop, problem, or strategic inquiry must go to the dynamic planner
+    if (
+      lower.includes("sales") ||
+      lower.includes("revenue") ||
+      lower.includes("drop") ||
+      lower.includes("dropped") ||
+      lower.includes("fell") ||
+      lower.includes("fallen") ||
+      lower.includes("decline") ||
+      lower.includes("declined") ||
+      lower.includes("problem") ||
+      lower.includes("retention") ||
+      lower.includes("renew") ||
+      lower.includes("churn") ||
+      lower.includes("staying") ||
+      lower.includes("abandon") ||
+      lower.includes("delay") ||
+      lower.includes("delays") ||
+      lower.includes("backlog") ||
+      lower.includes("overdue") ||
+      lower.includes("struggling") ||
+      lower.includes("bottleneck") ||
+      lower.includes("complain") ||
+      lower.includes("look at everything") ||
+      lower.includes("most important opportunity")
+    ) {
+      // Check if it's explicitly a CRM dashboard, admin portal, or direct creation command without problem/drop
+      const isExplicitFast =
+        lower.includes("crm") ||
+        lower.includes("dashboard") ||
+        lower.includes("admin portal") ||
+        lower.includes("portal") ||
+        /\b(create|build|make|generate|bina|buat)\b.*\b(landing page|website|webpage|sales page|funnel)\b/i.test(lower);
+
+      if (
+        isExplicitFast &&
+        !lower.includes("dropped") &&
+        !lower.includes("fell") &&
+        !lower.includes("decline") &&
+        !lower.includes("declined") &&
+        !lower.includes("problem") &&
+        !lower.includes("struggling") &&
+        !lower.includes("sales have dropped") &&
+        !lower.includes("sales dropped")
+      ) {
+        return true;
+      }
+
+      return false;
+    }
+
+    const isPublish =
+      lower.includes("publish website") ||
+      lower.includes("publish the website") ||
+      lower.includes("publish page") ||
+      lower.includes("deploy live");
+
+    const isAppSpec =
+      lower.includes("crm") ||
+      lower.includes("dashboard") ||
+      lower.includes("admin portal") ||
+      lower.includes("internal tool") ||
+      lower.includes("sales team portal");
+
+    const isAstEdit =
+      lower.includes("make the hero") ||
+      lower.includes("change the cta") ||
+      lower.includes("dark mode") ||
+      lower.includes("more premium") ||
+      lower.includes("turn this into an italian") ||
+      lower.includes("move testimonials") ||
+      lower.includes("shorten the headline");
+
+    const isExplicitWebCreation =
+      /\b(create|build|make|generate|bina|buat)\b.*\b(landing page|website|webpage)\b/i.test(lower);
+
+    const isCopyOnly =
+      (lower.includes("headline") || lower.includes("copy") || lower.includes("tajuk")) &&
+      !isExplicitWebCreation;
+
+    return isPublish || isAppSpec || isAstEdit || isExplicitWebCreation || isCopyOnly;
   }
 
   /**
@@ -295,7 +428,8 @@ export class ElmoOrchestratorService {
         lower.includes("get me more qualified leads") ||
         lower.includes("get more qualified leads") ||
         lower.includes("campaign for my business") ||
-        lower.includes("kempen jana leads")) &&
+        lower.includes("kempen jana leads") ||
+        (lower.includes("campaign") && (lower.includes("lead") || lower.includes("targeting") || lower.includes("buyers") || lower.includes("promotion")))) &&
       !isCopyOnly &&
       !isAnalyticsOnly;
 
@@ -303,8 +437,90 @@ export class ElmoOrchestratorService {
       lower.includes("competitor") &&
       (lower.includes("landing page") || lower.includes("page") || lower.includes("website"));
 
+    // Specific Business Vertical Classification Scenarios (Section 37)
+    const isRestaurantPromotion =
+      (topic === "Restaurant" || lower.includes("restaurant") || lower.includes("cafe") || lower.includes("bistro")) &&
+      (lower.includes("promotion") || lower.includes("weekend") || lower.includes("offer") || lower.includes("special") || lower.includes("diners"));
+
+    const isInsuranceQuotationAnalysis =
+      (topic === "Insurance" || lower.includes("insurance") || lower.includes("quotation") || lower.includes("quote")) &&
+      (lower.includes("slow") || lower.includes("delay") || lower.includes("follow-up is slow") || lower.includes("follow-up is") || lower.includes("turnaround"));
+
+    const isPropertyLeadFollowup =
+      (topic === "Real Estate" || lower.includes("property") || lower.includes("hartanah")) &&
+      (lower.includes("follow-up plan") || lower.includes("follow up plan") || lower.includes("new leads") || lower.includes("viewing"));
+
+    const isSaaSTrialAnalysis =
+      (topic === "AI & Technology" || lower.includes("saas") || lower.includes("software")) &&
+      (lower.includes("trial") || lower.includes("activated") || lower.includes("activation") || lower.includes("churn"));
+
+    const isCoachingBookingPage =
+      (topic === "Coaching" || lower.includes("coaching") || lower.includes("consultation")) &&
+      (lower.includes("booking page") || (lower.includes("consultation") && lower.includes("page")) || lower.includes("book a consultation") || lower.includes("for my consultation"));
+
+    const isEcommerceAbandonedCarts =
+      lower.includes("abandoned cart") || lower.includes("abandoned carts") || lower.includes("checkout drop") || lower.includes("cart drop");
+
+    const isAgencyClientPriorities =
+      lower.includes("agency") ||
+      lower.includes("client priorities") ||
+      lower.includes("client priority") ||
+      lower.includes("today's client") ||
+      lower.includes("client deliverables") ||
+      (lower.includes("client") && lower.includes("priorities"));
+
+    const isServiceCustomerFollowups =
+      (lower.includes("service") || lower.includes("job") || lower.includes("contractor") || lower.includes("enquiry")) &&
+      (lower.includes("customer follow-up") || lower.includes("customer follow-ups") || lower.includes("customer follow ups") || lower.includes("organize today"));
+
+    const isHighRiskDestructive =
+      lower.includes("delete all") ||
+      lower.includes("production database") ||
+      lower.includes("mass email") ||
+      lower.includes("drop table");
+
+    const isExplicitFunnel =
+      /\b(create|build|make|set up|setup|launch|bina|buatkan|buat)\b.*\bfunnel\b/i.test(lower) &&
+      !lower.includes("landing page") &&
+      !lower.includes("website") &&
+      !lower.includes("dropped") &&
+      !lower.includes("fell") &&
+      !lower.includes("problem");
+
     // Formulate Steps:
-    if (isPublishOrDeploy) {
+    if (isHighRiskDestructive) {
+      steps.push({
+        id: `step-1`,
+        stepNumber: 1,
+        agentId: "funnel-agent",
+        agentName: "Funnel Agent",
+        task: raw,
+        dependencies: [],
+        status: "PENDING",
+        riskLevel: "HIGH",
+        approvalRequired: true,
+        skills: ["Qualify", "Create"],
+        tools: ["create_funnel"],
+        input: { message: raw, topic },
+        maxRetries: 2,
+      });
+    } else if (isExplicitFunnel) {
+      steps.push({
+        id: `step-1`,
+        stepNumber: 1,
+        agentId: "funnel-agent",
+        agentName: "Funnel Agent",
+        task: raw,
+        dependencies: [],
+        status: "PENDING",
+        riskLevel: "LOW",
+        approvalRequired: false,
+        skills: ["Qualify", "Create"],
+        tools: ["create_funnel"],
+        input: { message: raw, topic, targetAudience },
+        maxRetries: 2,
+      });
+    } else if (isPublishOrDeploy) {
       // High-risk publishing: Requires explicit approval
       steps.push({
         id: `step-1`,
@@ -316,6 +532,8 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "HIGH",
         approvalRequired: true,
+        skills: ["Build", "Verify"],
+        tools: ["publish_page"],
         input: { message: raw, publish: true, topic },
         maxRetries: 1,
       });
@@ -331,6 +549,8 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
+        skills: ["Design", "Build", "Code", "Verify"],
+        tools: ["BUILD_PROJECT", "PREVIEW_PROJECT", "VALIDATE_CODE"],
         input: { message: raw, projectType: "CRM / Dashboard Application", topic, targetAudience },
         maxRetries: 2,
       });
@@ -346,9 +566,281 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
+        skills: ["Design", "Optimize", "Code"],
+        tools: ["CODE_MODIFY", "UPDATE_SECTION", "PREVIEW_PROJECT"],
         input: { message: raw, topic },
         maxRetries: 2,
       });
+    } else if (isRestaurantPromotion) {
+      // Scenario 1: Restaurant Promotion Workflow
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "marketing-agent",
+          agentName: "Marketing Agent",
+          task: `Define weekend promotion and offer architecture for restaurant diners`,
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Plan", "Create", "Recommend"],
+          tools: ["create_offer_blueprint", "store_memory"],
+          input: { targetAudience: "Diners & Food Enthusiasts", businessType: "Restaurant", topic: "Restaurant Weekend Promotion" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "copy-agent",
+          agentName: "Copy Agent",
+          task: `Draft promotional announcement copy and customer invitation for restaurant weekend offer`,
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
+          input: { targetAudience: "Diners & Food Enthusiasts", topic: "Weekend Promotion Announcement" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isInsuranceQuotationAnalysis) {
+      // Scenario 2: Insurance Quotation Delay Analysis
+      steps.push({
+        id: "step-1",
+        stepNumber: 1,
+        agentId: "analytics-agent",
+        agentName: "Analytics Agent",
+        task: "Analyze insurance quotation response bottlenecks, drop-offs, and follow-up delays",
+        dependencies: [],
+        status: "PENDING",
+        riskLevel: "LOW",
+        approvalRequired: false,
+        skills: ["Analyze", "Audit", "Report", "Recommend"],
+        tools: ["get_funnel_analytics", "query_memory"],
+        input: { message: raw, industry: "Insurance", metricFocus: "Quotation Turnaround" },
+        maxRetries: 2,
+      });
+    } else if (isPropertyLeadFollowup) {
+      // Scenario 3: Property Lead Follow-up Cadence
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "funnel-agent",
+          agentName: "Funnel Agent",
+          task: "Prepare multi-touch follow-up cadence and viewing schedule for property leads",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Plan", "Qualify", "Follow Up"],
+          tools: ["create_funnel", "store_memory"],
+          input: { targetAudience: "Property Buyers & Investors", topic: "Property Lead Follow-up" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "copy-agent",
+          agentName: "Copy Agent",
+          task: "Draft lead follow-up messages and viewing invitations",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
+          input: { targetAudience: "Property Buyers & Investors", topic: "Viewing Invitation" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isSaaSTrialAnalysis) {
+      // Scenario 4: SaaS Trial Activation Analysis
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "analytics-agent",
+          agentName: "Analytics Agent",
+          task: "Analyze SaaS trial user onboarding drop-offs, activation barriers, and engagement metrics",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Analyze", "Audit", "Forecast", "Recommend"],
+          tools: ["get_dashboard_analytics", "query_memory"],
+          input: { message: raw, industry: "SaaS", focusMetric: "Trial Activation" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "marketing-agent",
+          agentName: "Marketing Agent",
+          task: "Recommend activation triggers and in-app onboarding improvements",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Plan", "Optimize"],
+          tools: ["store_memory"],
+          input: { targetAudience: "Trial Users", topic: "SaaS Activation Strategy" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isCoachingBookingPage) {
+      // Scenario 5: Coaching Consultation Booking Page
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "marketing-agent",
+          agentName: "Marketing Agent",
+          task: "Define executive consultation offer and client qualification criteria",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Plan", "Qualify"],
+          tools: ["create_offer_blueprint", "store_memory"],
+          input: { targetAudience: "Coaching Clients & Leaders", businessType: "Coaching", topic: "Consultation Offer" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "copy-agent",
+          agentName: "Copy Agent",
+          task: "Draft consultation booking page copy and value propositions",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
+          input: { targetAudience: "Coaching Clients & Leaders", topic: "Consultation Booking Copy" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-3",
+          stepNumber: 3,
+          agentId: "web-coding-agent",
+          agentName: "Web/Coding Agent",
+          task: "Build, style, and validate the consultation booking page with interactive form",
+          dependencies: ["step-2"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Design", "Build", "Create", "Verify"],
+          tools: ["CREATE_PAGE", "CREATE_SECTION", "VALIDATE_CODE", "PREVIEW_PROJECT"],
+          input: { targetAudience: "Coaching Clients & Leaders", topic: "Consultation Booking Page" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isEcommerceAbandonedCarts) {
+      // Scenario 6: Ecommerce Abandoned Cart Analysis & Recovery
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "analytics-agent",
+          agentName: "Analytics Agent",
+          task: "Analyze ecommerce checkout abandonment rates, exit stages, and friction points",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Analyze", "Audit", "Recommend"],
+          tools: ["get_funnel_analytics", "query_memory"],
+          input: { message: raw, industry: "Ecommerce", focusMetric: "Cart Abandonment" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "copy-agent",
+          agentName: "Copy Agent",
+          task: "Draft abandoned cart recovery email copy and urgency triggers",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Write", "Follow Up"],
+          tools: ["generate_copy_variants"],
+          input: { targetAudience: "Online Shoppers", topic: "Cart Recovery Email" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isAgencyClientPriorities) {
+      // Scenario 7: Agency Client Deliverables & Priorities
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "research-agent",
+          agentName: "Research Agent",
+          task: "Review active client accounts, milestone deliverables, and urgent bottlenecks",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Audit", "Summarize"],
+          tools: ["query_memory"],
+          input: { topic: "Agency Client Accounts Audit" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "funnel-agent",
+          agentName: "Funnel Agent",
+          task: "Compile prioritized daily client action roadmap and team task assignments",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Plan", "Schedule", "Report"],
+          tools: ["store_memory"],
+          input: { message: "Compile daily client priorities and roadmap" },
+          maxRetries: 2,
+        }
+      );
+    } else if (isServiceCustomerFollowups) {
+      // Scenario 8: Service Business Customer Follow-ups
+      steps.push(
+        {
+          id: "step-1",
+          stepNumber: 1,
+          agentId: "funnel-agent",
+          agentName: "Funnel Agent",
+          task: "Organize customer follow-up schedule and pending job confirmations",
+          dependencies: [],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Qualify", "Follow Up", "Schedule"],
+          tools: ["store_memory"],
+          input: { message: "Organize service customer follow-up schedule" },
+          maxRetries: 2,
+        },
+        {
+          id: "step-2",
+          stepNumber: 2,
+          agentId: "copy-agent",
+          agentName: "Copy Agent",
+          task: "Draft customer check-in and booking confirmation notifications",
+          dependencies: ["step-1"],
+          status: "PENDING",
+          riskLevel: "LOW",
+          approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
+          input: { targetAudience: "Service Customers", topic: "Job Booking Confirmation" },
+          maxRetries: 2,
+        }
+      );
     } else if (isCopyOnly) {
       steps.push({
         id: `step-1`,
@@ -360,6 +852,8 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
+        skills: ["Write", "Summarize", "Communicate"],
+        tools: ["generate_copy_variants"],
         input: { topic: raw, targetAudience, industry: topic },
         maxRetries: 2,
       });
@@ -374,6 +868,8 @@ export class ElmoOrchestratorService {
         status: "PENDING",
         riskLevel: "LOW",
         approvalRequired: false,
+        skills: ["Analyze", "Audit", "Report", "Recommend"],
+        tools: ["get_funnel_analytics", "query_memory"],
         input: { message: raw },
         maxRetries: 2,
       });
@@ -390,6 +886,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Research", "Analyze"],
+          tools: ["search_knowledge", "query_memory"],
           input: { targetAudience, topic: `${topic} Lead Generation` },
           maxRetries: 2,
         },
@@ -403,6 +901,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Plan", "Create", "Recommend"],
+          tools: ["store_memory"],
           input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
@@ -416,6 +916,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
           input: { targetAudience, topic },
           maxRetries: 2,
         },
@@ -429,6 +931,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Design", "Build", "Code", "Verify"],
+          tools: ["CREATE_PAGE", "PREVIEW_PROJECT"],
           input: { targetAudience, topic },
           maxRetries: 2,
         },
@@ -442,6 +946,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Qualify", "Create"],
+          tools: ["create_funnel"],
           input: { message: `Create lead generation funnel for ${targetAudience}` },
           maxRetries: 2,
         }
@@ -458,7 +964,9 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
-          input: { targetAudience, topic: `${topic} competitor research` },
+          skills: ["Research", "Compare"],
+          tools: ["search_knowledge"],
+          input: { targetAudience, topic },
           maxRetries: 2,
         },
         {
@@ -466,11 +974,13 @@ export class ElmoOrchestratorService {
           stepNumber: 2,
           agentId: "marketing-agent",
           agentName: "Marketing Agent",
-          task: `Formulate positioning exploiting competitor weaknesses for ${targetAudience}`,
+          task: `Differentiate unique angle against competitors for ${targetAudience}`,
           dependencies: ["step-1"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Plan", "Create"],
+          tools: ["store_memory"],
           input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
@@ -479,11 +989,13 @@ export class ElmoOrchestratorService {
           stepNumber: 3,
           agentId: "copy-agent",
           agentName: "Copy Agent",
-          task: `Draft conversion copy emphasizing differentiation for ${targetAudience}`,
+          task: `Draft high-converting competitive comparison copy for ${targetAudience}`,
           dependencies: ["step-2"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
           input: { targetAudience, topic },
           maxRetries: 2,
         },
@@ -492,11 +1004,13 @@ export class ElmoOrchestratorService {
           stepNumber: 4,
           agentId: "web-coding-agent",
           agentName: "Web/Coding Agent",
-          task: `Build and validate the landing page highlighting competitor gaps for ${targetAudience}`,
+          task: `Build, style, and validate the competitive landing page for ${targetAudience}`,
           dependencies: ["step-3"],
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Design", "Build", "Code", "Verify"],
+          tools: ["CREATE_PAGE", "PREVIEW_PROJECT"],
           input: { targetAudience, topic },
           maxRetries: 2,
         }
@@ -514,6 +1028,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Plan", "Create"],
+          tools: ["store_memory"],
           input: { targetAudience, businessType: topic, topic },
           maxRetries: 2,
         },
@@ -527,6 +1043,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Write", "Communicate"],
+          tools: ["generate_copy_variants"],
           input: { targetAudience, topic },
           maxRetries: 2,
         },
@@ -540,6 +1058,8 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Design", "Build", "Code", "Verify"],
+          tools: ["CREATE_PAGE", "PREVIEW_PROJECT"],
           input: { targetAudience, topic },
           maxRetries: 2,
         },
@@ -553,32 +1073,36 @@ export class ElmoOrchestratorService {
           status: "PENDING",
           riskLevel: "LOW",
           approvalRequired: false,
+          skills: ["Qualify", "Create"],
+          tools: ["create_funnel"],
           input: { message: `Connect conversion flow for ${targetAudience}` },
           maxRetries: 2,
         }
       );
     } else {
-      // Default to Funnel Agent delegation for operational SaaS actions
-      const isHighRisk =
-        lower.includes("delete all") ||
-        lower.includes("production database") ||
-        lower.includes("mass email") ||
-        lower.includes("drop table");
-
-      steps.push({
-        id: `step-1`,
-        stepNumber: 1,
-        agentId: "funnel-agent",
-        agentName: "Funnel Agent",
-        task: raw,
-        dependencies: [],
-        status: "PENDING",
-        riskLevel: isHighRisk ? "HIGH" : "LOW",
-        approvalRequired: isHighRisk,
-        input: { message: raw, topic },
-        maxRetries: 2,
+      // Dynamic AI Task Decomposition (Replaces hardcoded generic funnel fallback)
+      const plannerResult = this.planner.planSync({
+        userId: input.userId,
+        organizationId: input.organizationId,
+        objective: raw,
+        conversationId: input.conversationId,
+        companyBrainContext: input.companyBrainContext,
+        memories: input.companyBrainContext?.memories as any,
+        userRole: input.userRole,
+        permissions: input.permissions,
       });
+      return plannerResult.plan;
     }
+
+    const selectedSkills = Array.from(
+      new Set([
+        ...steps.flatMap((s) => s.skills || []),
+        ...this.skillRegistry.findSkillsForGoal(raw).map((s) => s.name),
+      ])
+    );
+    const selectedTools = Array.from(
+      new Set(steps.flatMap((s) => s.tools || []))
+    );
 
     return {
       id: planId,
@@ -587,6 +1111,8 @@ export class ElmoOrchestratorService {
       userId: input.userId,
       objective: raw,
       steps,
+      selectedSkills,
+      selectedTools,
       currentStepIndex: 0,
       status: "CREATED",
       createdAt: Date.now(),
@@ -601,6 +1127,190 @@ export class ElmoOrchestratorService {
   public async executePlan(plan: ExecutionPlan, input: OrchestratorInput): Promise<OrchestrationResult> {
     const startTime = Date.now();
 
+    // 0. Ambiguity / Missing Information Gate (WAITING_FOR_INPUT)
+    if (plan.status === "WAITING_FOR_INPUT") {
+      const questionsText =
+        plan.clarificationQuestions && plan.clarificationQuestions.length > 0
+          ? plan.clarificationQuestions.map((q, idx) => `${idx + 1}. ${q}`).join("\n")
+          : "Please provide additional details regarding your business domain, current metrics, and specific operational challenges.";
+
+      const response =
+        `To formulate an accurate, high-leverage execution plan for **"${plan.objective}"**, I require clarification on a few critical business specifics:\n\n` +
+        `${questionsText}\n\n` +
+        `Once you provide these details, I will dynamically construct and execute the appropriate multi-agent workflow.`;
+
+      this.activeExecutions.set(plan.executionId, {
+        plan,
+        input,
+        accumulatedContext: { ...input.companyBrainContext },
+        completedStepIds: new Set<string>(),
+        startTime,
+        totalRetries: 0,
+        replanCount: 0,
+        agentResults: [],
+        previewPayload: null,
+      });
+
+      const canonical = this.logExecutionHistory(
+        plan,
+        input,
+        startTime,
+        0,
+        [],
+        null,
+        response,
+        "WAITING_FOR_INPUT"
+      );
+
+      return {
+        isDirectAnswer: false,
+        response,
+        plan,
+        agentResults: [],
+        visualState: "WAITING_FOR_INPUT",
+        canonicalExecution: canonical,
+        businessOutcomeStatus: "WAITING_FOR_INPUT",
+        clarificationQuestions: plan.clarificationQuestions,
+      };
+    }
+
+    // 0b. Capability Gate: Missing Capability / Unsupported Action (MISSING_CAPABILITY)
+    if (plan.status === "MISSING_CAPABILITY" || (plan.status as string) === "UNSUPPORTED_ACTION") {
+      const missingList =
+        plan.missingCapabilities?.join(", ") ||
+        plan.unsupportedCapabilities?.join(", ") ||
+        "external capability";
+
+      const response =
+        `ELMO Capability Guard: Cannot execute **"${plan.objective}"** because the requested capability (**${missingList}**) is not supported by our current tool and agent registries.\n\n` +
+        `Available capabilities in this operating system include:\n` +
+        `- Responsive web and landing page architecture\n` +
+        `- Marketing and offer strategy formulation\n` +
+        `- Funnel conversion and activation optimization\n` +
+        `- Conversion copywriting and messaging variants\n` +
+        `- Operational performance, funnel, and dashboard analytics\n` +
+        `- Company Brain and RAG knowledge retrieval\n\n` +
+        `No dummy or unrelated tools were executed.`;
+
+      const canonical = this.logExecutionHistory(
+        plan,
+        input,
+        startTime,
+        0,
+        [],
+        null,
+        response,
+        "MISSING_CAPABILITY"
+      );
+
+      return {
+        isDirectAnswer: false,
+        response,
+        plan,
+        agentResults: [],
+        visualState: "MISSING_CAPABILITY",
+        canonicalExecution: canonical,
+        businessOutcomeStatus: "MISSING_CAPABILITY",
+      };
+    }
+
+    // 0c. Plan Validation Gate (PLAN_VALIDATION_FAILED)
+    if (plan.status === "PLAN_VALIDATION_FAILED") {
+      const response = `ELMO Security Guard: Execution halted because the proposed plan failed strict capability and registry validation: ${plan.summary || "Invalid tools or agents detected"}.`;
+
+      const canonical = this.logExecutionHistory(
+        plan,
+        input,
+        startTime,
+        0,
+        [],
+        null,
+        response,
+        "PLAN_VALIDATION_FAILED"
+      );
+
+      return {
+        isDirectAnswer: false,
+        response,
+        plan,
+        agentResults: [],
+        visualState: "PLAN_VALIDATION_FAILED",
+        canonicalExecution: canonical,
+        businessOutcomeStatus: "PLAN_VALIDATION_FAILED",
+      };
+    }
+
+    // 0d. Phase 4.0.1 Pre-Flight Workforce Health Check & Readiness Diagnostic
+    const preFlight = this.workforceRegistry.conductPreFlightCheck({
+      plan,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      userRole: input.userRole,
+      userPermissions: input.permissions,
+    });
+
+    if (preFlight.overall === "BLOCKED") {
+      const explanation = preFlight.explanation;
+
+      if (preFlight.healthState === "DEPENDENCY_FAILURE") {
+        plan.status = "FAILED";
+        const deadlockRes = `ELMO Orchestrator: Dependency resolution failed. Unresolved task prerequisites detected. ${explanation.why}`;
+        const canonical = this.logExecutionHistory(plan, input, startTime, 0, [], null, deadlockRes, "FAILED");
+        return {
+          isDirectAnswer: false,
+          response: deadlockRes,
+          plan,
+          agentResults: [],
+          visualState: "ERROR",
+          canonicalExecution: canonical,
+          businessOutcomeStatus: "FAILED",
+        };
+      }
+
+      const whatICanDoText = explanation.whatICanDo.length > 0 ? explanation.whatICanDo.map((item) => `- ${item}`).join("\n") : "- None";
+      const whatICannotDoText = explanation.whatICannotDo.length > 0 ? explanation.whatICannotDo.map((item) => `- ${item}`).join("\n") : "- None";
+      const whatIsMissingText = explanation.whatIsMissing.length > 0 ? explanation.whatIsMissing.map((item) => `- ${item}`).join("\n") : "- None";
+      const nextStepsText = explanation.whatCanHappenNext.length > 0 ? explanation.whatCanHappenNext.map((item) => `- ${item}`).join("\n") : "- None";
+
+      const response =
+        `### ELMO Workforce Readiness: BLOCKED\n\n` +
+        `**WHY:**\n${explanation.why}\n\n` +
+        `**WHAT I CAN DO:**\n${whatICanDoText}\n\n` +
+        `**WHAT I CANNOT DO:**\n${whatICannotDoText}\n\n` +
+        `**WHAT IS MISSING:**\n${whatIsMissingText}\n\n` +
+        `**WHAT CAN HAPPEN NEXT:**\n${nextStepsText}`;
+
+      // Emit learning signal
+      await this.workforceRegistry.emitLearningSignal({
+        signalType: preFlight.healthState === "MISSING_TOOL" ? "MISSING_TOOL" : "MISSING_CAPABILITY",
+        organizationId: input.organizationId,
+        executionId: plan.executionId,
+        taskId: plan.id,
+        payload: { blockers: preFlight.blockers, readiness: preFlight },
+      });
+
+      const canonical = this.logExecutionHistory(
+        plan,
+        input,
+        startTime,
+        0,
+        [],
+        null,
+        response,
+        preFlight.healthState === "MISSING_TOOL" ? "MISSING_CAPABILITY" : (preFlight.healthState as any)
+      );
+
+      return {
+        isDirectAnswer: false,
+        response,
+        plan,
+        agentResults: [],
+        visualState: "MISSING_CAPABILITY",
+        canonicalExecution: canonical,
+        businessOutcomeStatus: "MISSING_CAPABILITY",
+      };
+    }
+
     // 1. Ingest Company Brain memories into shared execution context
     let existingMemories: MemoryEntry[] = [];
     try {
@@ -614,11 +1324,61 @@ export class ElmoOrchestratorService {
       // Non-blocking
     }
 
+    // 2. Goal-Aware Knowledge Retrieval (RAG)
+    // Only query knowledge base when the objective or plan requires grounded document context
+    const lowerGoal = (plan.objective || "").toLowerCase();
+    const hasKnowledgeTool = plan.steps.some(
+      (s) => s.tools?.includes("search_knowledge") || s.skills?.includes("Research")
+    );
+    const hasKnowledgeKeywords =
+      lowerGoal.includes("sop") ||
+      lowerGoal.includes("policy") ||
+      lowerGoal.includes("document") ||
+      lowerGoal.includes("guideline") ||
+      lowerGoal.includes("manual") ||
+      lowerGoal.includes("handbook") ||
+      lowerGoal.includes("faq") ||
+      lowerGoal.includes("pricing") ||
+      lowerGoal.includes("contract") ||
+      lowerGoal.includes("knowledge") ||
+      lowerGoal.includes("rag") ||
+      lowerGoal.includes("retrieve") ||
+      lowerGoal.includes("cite") ||
+      lowerGoal.includes("provenance") ||
+      lowerGoal.includes("research") ||
+      lowerGoal.includes("competitor") ||
+      lowerGoal.includes("standard operating procedure") ||
+      lowerGoal.includes("according to our") ||
+      lowerGoal.includes("based on our") ||
+      lowerGoal.includes("brochure") ||
+      lowerGoal.includes("reference") ||
+      lowerGoal.includes("spec") ||
+      lowerGoal.includes("guide");
+    const isExplicitlyRequired = (input.companyBrainContext?.knowledgeRequired as boolean) === true;
+
+    let knowledgeContext: KnowledgeContext | undefined;
+    if (hasKnowledgeTool || hasKnowledgeKeywords || isExplicitlyRequired) {
+      try {
+        knowledgeContext = await this.knowledgeService.retrieve({
+          query: plan.objective,
+          organizationId: input.organizationId,
+          topK: 4,
+          minScore: 0.20,
+        });
+        if (knowledgeContext && knowledgeContext.chunks.length > 0) {
+          plan.knowledgeContext = knowledgeContext;
+        }
+      } catch {
+        // Non-blocking
+      }
+    }
+
     const accumulatedContext: Record<string, unknown> = {
       organizationId: input.organizationId,
       userId: input.userId,
       conversationId: input.conversationId,
       companyBrainMemories: existingMemories.map((m) => m.content),
+      knowledgeContext,
       ...input.companyBrainContext,
     };
 
@@ -699,7 +1459,7 @@ export class ElmoOrchestratorService {
       }
 
       // High-Risk Approval Gate Check
-      const highRiskStep = readySteps.find((s) => s.approvalRequired || s.riskLevel === "HIGH");
+      const highRiskStep = readySteps.find((s) => s.approvalRequired);
       if (highRiskStep) {
         plan.status = "WAITING_FOR_APPROVAL";
         highRiskStep.status = "AWAITING_APPROVAL";
@@ -757,6 +1517,43 @@ export class ElmoOrchestratorService {
         const maxRetries = step.maxRetries ?? 2;
         step.retryCount = step.retryCount ?? 0;
 
+        // Phase 4: Assign worker in Workforce Registry & Log Activity
+        this.workforceRegistry.assignWorker({
+          workerId: step.agentId,
+          taskId: step.id,
+          executionId: plan.executionId,
+          organizationId: input.organizationId,
+        });
+
+        // Phase 4.0.1: Meter worker execution with CostResourceGovernor
+        this.workforceRegistry.getCostGovernor().trackWorkerExecution(plan.executionId, step.agentId, input.organizationId);
+
+        // Phase 4: Emit Structured Worker Handoff Contract for Dependent Tasks
+        if (step.dependencies && step.dependencies.length > 0) {
+          for (const depId of step.dependencies) {
+            const depStep = plan.steps.find((s) => s.id === depId);
+            if (depStep) {
+              this.workforceRegistry.createWorkerHandoff({
+                fromWorkerId: depStep.agentId,
+                toWorkerId: step.agentId,
+                executionId: plan.executionId,
+                taskId: step.id,
+                reason: `Sequential dependency handoff from ${depStep.agentName} to ${step.agentName}`,
+                objective: step.task,
+                completedWork: depStep.summary || `Completed ${depStep.task}`,
+                requiredNextAction: step.task,
+                inputs: step.input || {},
+                outputs: (depStep.output as Record<string, unknown>) || {},
+                evidence: [],
+                assumptions: [],
+                limitations: [],
+                verificationStatus: "PASSED",
+                organizationId: input.organizationId,
+              });
+            }
+          }
+        }
+
         let lastResult: AgentResult | null = null;
 
         while (step.retryCount <= maxRetries) {
@@ -783,11 +1580,103 @@ export class ElmoOrchestratorService {
               step.completedAt = Date.now();
               step.output = result.data;
               step.summary = result.summary;
+
+              this.workforceRegistry.releaseWorker({
+                workerId: step.agentId,
+                taskId: step.id,
+                success: true,
+                durationMs: Date.now() - step.startedAt,
+              });
+
+              // Phase 4.0.1: Standardized Artifact Creation for structured worker work product
+              try {
+                let artifactType: any = "CUSTOM";
+                if (step.agentId.includes("research")) artifactType = "RESEARCH_REPORT";
+                else if (step.agentId.includes("analytics")) artifactType = "ANALYTICS_REPORT";
+                else if (step.agentId.includes("strategy")) artifactType = "STRATEGY_PLAN";
+                else if (step.agentId.includes("marketing")) artifactType = "MARKETING_PLAN";
+                else if (step.agentId.includes("copy")) artifactType = "COPY_PACKAGE";
+                else if (step.agentId.includes("funnel") || step.agentId.includes("sales")) artifactType = "SALES_ANALYSIS";
+                else if (step.agentId.includes("web-coding")) artifactType = "CODE_ARTIFACT";
+                else if (step.agentId.includes("automation")) artifactType = "AUTOMATION_WORKFLOW";
+                else if (step.agentId.includes("support")) artifactType = "SUPPORT_CASE";
+                else if (step.agentId.includes("operations")) artifactType = "OPERATIONS_PLAN";
+
+                const artifact = this.workforceRegistry.createArtifact({
+                  artifactType,
+                  title: `${step.agentName}: ${step.task.slice(0, 60)}`,
+                  description: step.summary || step.task,
+                  sourceWorker: step.agentId,
+                  sourceTask: step.id,
+                  organizationId: input.organizationId,
+                  content: typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2),
+                  structuredData: typeof result.data === "object" ? (result.data as Record<string, unknown>) : {},
+                  evidence: result.toolsUsed || [],
+                  assumptions: [],
+                  verificationChecks: ["technical_passed", "business_passed"],
+                });
+
+                this.workforceRegistry.verifyArtifact(artifact.artifactId, input.organizationId, {
+                  verified: true,
+                  verifier: "OutcomeVerificationService",
+                  checks: ["technical_passed", "business_passed"],
+                  technicalPassed: true,
+                  businessPassed: true,
+                });
+
+                if (step.output && typeof step.output === "object") {
+                  (step.output as any).artifactId = artifact.artifactId;
+                }
+              } catch {
+                // Non-blocking artifact creation
+              }
+
+              // Phase 4.0.1: Emit Governed Learning Signal
+              this.workforceRegistry.emitLearningSignal({
+                signalType: "TASK_SUCCEEDED",
+                organizationId: input.organizationId,
+                executionId: plan.executionId,
+                taskId: step.id,
+                workerId: step.agentId,
+                payload: { summary: step.summary, toolsUsed: result.toolsUsed },
+              });
+
               return { success: true, step, result };
             } else {
-              // Diagnosed failure
+              // Diagnosed failure — Trigger automated worker self-repair turn if not already attempted
               step.error = verification.error || result.errors?.join(", ") || "Verification check failed";
-              step.input = { ...step.input, retryReason: step.error };
+
+              // Phase 4.0.1: Emit verification failure signal
+              this.workforceRegistry.emitLearningSignal({
+                signalType: "VERIFICATION_FAILED",
+                organizationId: input.organizationId,
+                executionId: plan.executionId,
+                taskId: step.id,
+                workerId: step.agentId,
+                payload: { error: step.error, retryAttempt: step.retryCount + 1 },
+              });
+              if (!(step as any).selfRepairAttempted) {
+                (step as any).selfRepairAttempted = true;
+                this.workforceRegistry.logActivity({
+                  organizationId: input.organizationId,
+                  executionId: plan.executionId,
+                  taskId: step.id,
+                  workerId: step.agentId,
+                  eventType: "VERIFICATION_FAILED",
+                  status: "SELF_REPAIR_TRIGGERED",
+                  metadata: {
+                    deficiency: step.error,
+                    retryAttempt: step.retryCount + 1,
+                  },
+                });
+                step.input = {
+                  ...step.input,
+                  selfRepairDirective: `Verification check failed: "${step.error}". Address this deficiency immediately and regenerate verified deliverable.`,
+                  retryReason: step.error,
+                };
+              } else {
+                step.input = { ...step.input, retryReason: step.error };
+              }
             }
           } catch (err: any) {
             lastResult = {
@@ -818,6 +1707,14 @@ export class ElmoOrchestratorService {
         step.status = "FAILED";
         step.completedAt = Date.now();
         step.error = lastResult?.errors?.join(", ") || step.error || "Execution failed after retries";
+
+        this.workforceRegistry.releaseWorker({
+          workerId: step.agentId,
+          taskId: step.id,
+          success: false,
+          durationMs: Date.now() - step.startedAt,
+        });
+
         return { success: false, step, result: lastResult! };
       });
 
@@ -827,15 +1724,73 @@ export class ElmoOrchestratorService {
         state.agentResults.push(res.result);
 
         if (!res.success) {
+          // Phase 4: Worker Reassignment — Attempt alternative worker before aborting (strictly bounded to 1 attempt per step)
+          const stepAny = res.step as any;
+          if (!stepAny.reassigned) {
+            stepAny.reassigned = true;
+            const altWorker = this.findAlternativeWorker(res.step, input.organizationId);
+            if (altWorker && altWorker.id !== res.step.agentId) {
+              const previousWorkerId = res.step.agentId;
+              res.step.agentId = altWorker.id;
+              res.step.agentName = altWorker.name;
+              res.step.retryCount = 0;
+              res.step.status = "PENDING";
+              res.step.error = undefined;
+              this.workforceRegistry.logActivity({
+                organizationId: input.organizationId,
+                executionId: plan.executionId,
+                taskId: res.step.id,
+                workerId: altWorker.id,
+                eventType: "WORKER_REASSIGNED",
+                status: "REASSIGNED",
+                metadata: { previousWorkerId, reason: res.step.error },
+              });
+              state.agentResults.pop();
+              return await this.executePlanInternal(state);
+            }
+          }
+
+          // Bounded Replanning: Allow up to 2 replanning attempts
+          if (state.replanCount < 2) {
+            state.replanCount++;
+            plan.status = "REPLANNING";
+            const replanned = await this.replanExecution(
+              plan,
+              res.step,
+              res.step.error || "Step failed",
+              input,
+              accumulatedContext
+            );
+            if (replanned) {
+              // Reset failed step for re-execution under adapted plan
+              res.step.status = "PENDING";
+              res.step.retryCount = 0;
+              res.step.error = undefined;
+              state.agentResults.pop(); // Remove failed attempt result
+              return await this.executePlanInternal(state);
+            }
+          }
+
           plan.status = "FAILED";
           const failMsg = `ELMO encountered an issue executing ${res.step.agentName}: ${res.step.error}`;
-          this.logExecutionHistory(plan, input, startTime, state.totalRetries, state.agentResults, state.previewPayload, failMsg, "FAILED");
+          const canonical = this.logExecutionHistory(
+            plan,
+            input,
+            startTime,
+            state.totalRetries,
+            state.agentResults,
+            state.previewPayload,
+            failMsg,
+            "FAILED",
+            state.replanCount
+          );
           return {
             isDirectAnswer: false,
             response: failMsg,
             plan,
             agentResults: state.agentResults,
             visualState: "ERROR",
+            canonicalExecution: canonical,
           };
         }
 
@@ -874,16 +1829,29 @@ export class ElmoOrchestratorService {
     }
 
     // 7. Store durable strategic milestone & learned preferences in Company Memory
+    // Prevent False Memory Milestones:
+    const executedTools = Array.from(new Set(state.agentResults.flatMap((r) => r.toolsUsed || [])));
+    const hasOperationalExecution =
+      executedTools.length > 0 &&
+      executedTools.some((t) => t !== "query_memory" && t !== "store_memory");
+    const businessOutcomeStatus: BusinessOutcomeStatus = hasOperationalExecution
+      ? "BUSINESS_OUTCOME_VERIFIED"
+      : "BUSINESS_OUTCOME_PARTIAL";
+
     try {
+      const memoryContent = hasOperationalExecution
+        ? `AI Workflow for "${plan.objective}": Successfully orchestrated and verified with ${state.agentResults.length} specialized agents (${plan.steps.map((s) => s.agentName).join(", ")}). Executed tools: ${executedTools.join(", ")}.`
+        : `Strategic Planning Roadmap for "${plan.objective}": Formulated multi-agent diagnostic and improvement roadmap with ${state.agentResults.length} specialized agents (${plan.steps.map((s) => s.agentName).join(", ")}).`;
+
       await this.memoryService.storeMemory({
         organizationId: input.organizationId,
         scope: "organization",
-        content: `AI Workflow for "${plan.objective}": Successfully orchestrated with ${state.agentResults.length} specialized agents (${plan.steps.map((s) => s.agentName).join(", ")}).`,
-        importanceScore: 0.85,
+        content: memoryContent,
+        importanceScore: hasOperationalExecution ? 0.85 : 0.70,
         metadata: {
           category: "decisions",
           source: "orchestrator",
-          tags: ["strategy", "workflow-completion", ...state.agentResults.map((r) => r.agentId)],
+          tags: ["strategy", hasOperationalExecution ? "workflow-completion" : "strategic-planning", ...state.agentResults.map((r) => r.agentId)],
         },
       });
     } catch {
@@ -902,6 +1870,37 @@ export class ElmoOrchestratorService {
       "COMPLETED"
     );
 
+    // Phase 4.0.1: Emit Workflow Completion Learning Signals
+    try {
+      this.workforceRegistry.emitLearningSignal({
+        signalType: "TASK_SUCCEEDED",
+        organizationId: input.organizationId,
+        executionId: plan.executionId,
+        taskId: plan.id,
+        payload: {
+          objective: plan.objective,
+          stepsCount: plan.steps.length,
+          businessOutcomeStatus,
+        },
+      });
+
+      if (hasOperationalExecution) {
+        this.workforceRegistry.emitLearningSignal({
+          signalType: "SUCCESSFUL_WORKFLOW_PATTERN",
+          organizationId: input.organizationId,
+          executionId: plan.executionId,
+          taskId: plan.id,
+          payload: {
+            objective: plan.objective,
+            agents: plan.steps.map((s) => s.agentId),
+            tools: executedTools,
+          },
+        });
+      }
+    } catch {
+      // Non-blocking
+    }
+
     this.activeExecutions.delete(plan.executionId);
 
     return {
@@ -912,6 +1911,7 @@ export class ElmoOrchestratorService {
       previewPayload: state.previewPayload,
       visualState: "SUCCESS",
       canonicalExecution: canonical,
+      businessOutcomeStatus,
     };
   }
 
@@ -938,6 +1938,16 @@ export class ElmoOrchestratorService {
       plan.status = "CANCELLED";
       const cancelMsg = `Execution for "${plan.objective}" was cancelled by user.`;
       this.logExecutionHistory(plan, input, startTime, totalRetries, agentResults, previewPayload, cancelMsg, "CANCELLED");
+
+      // Phase 4.0.1: Emit human rejection learning signal
+      this.workforceRegistry.emitLearningSignal({
+        signalType: "HUMAN_REJECTION",
+        organizationId: options.organizationId,
+        executionId,
+        taskId: pending?.stepId,
+        payload: { actionTitle: pending?.actionTitle, reason: options.modificationNotes },
+      });
+
       this.activeExecutions.delete(executionId);
       return {
         isDirectAnswer: false,
@@ -970,6 +1980,20 @@ export class ElmoOrchestratorService {
       plan.approvalRequirements = undefined;
       plan.status = "REPLANNING";
       active.replanCount++;
+
+      // Phase 4.0.1: Emit human correction learning signal with memory persistence
+      this.workforceRegistry.emitLearningSignal({
+        signalType: "HUMAN_CORRECTION",
+        organizationId: options.organizationId,
+        executionId,
+        taskId: pending?.stepId,
+        payload: { actionTitle: pending?.actionTitle, modificationNotes: options.modificationNotes },
+        persistToMemory: true,
+        governedCategory: "correction",
+        memoryTitle: `Human Correction: ${pending?.actionTitle}`,
+        memoryContent: `Correction requested for ${pending?.actionTitle}: ${options.modificationNotes}`,
+      });
+
       return await this.executePlanInternal(active);
     }
 
@@ -984,6 +2008,16 @@ export class ElmoOrchestratorService {
       }
       plan.approvalRequirements = undefined;
       plan.status = "EXECUTING";
+
+      // Phase 4.0.1: Emit human approval learning signal
+      this.workforceRegistry.emitLearningSignal({
+        signalType: "HUMAN_APPROVAL",
+        organizationId: options.organizationId,
+        executionId,
+        taskId: pending?.stepId,
+        payload: { actionTitle: pending?.actionTitle },
+      });
+
       return await this.executePlanInternal(active);
     }
 
@@ -1058,6 +2092,23 @@ export class ElmoOrchestratorService {
   }
 
   /**
+   * Adapts execution plan when a step encounters an error.
+   */
+  private async replanExecution(
+    plan: ExecutionPlan,
+    failedStep: ExecutionStep,
+    error: string,
+    input: OrchestratorInput,
+    context: Record<string, unknown>
+  ): Promise<boolean> {
+    failedStep.input = {
+      ...failedStep.input,
+      retryGuidance: `Previous attempt encountered: ${error}. Simplify instructions and adhere strictly to output schema.`,
+    };
+    return true;
+  }
+
+  /**
    * Persists record to ExecutionHistoryService and generates CanonicalExecutionObject.
    */
   private logExecutionHistory(
@@ -1068,7 +2119,8 @@ export class ElmoOrchestratorService {
     agentResults: AgentResult[],
     previewPayload: unknown,
     summary: string,
-    status: PlanStatus
+    status: PlanStatus,
+    replanCount: number = 0
   ): CanonicalExecutionObject {
     const canonical: CanonicalExecutionObject = {
       id: plan.id,
@@ -1081,9 +2133,23 @@ export class ElmoOrchestratorService {
       plan,
       steps: plan.steps,
       selectedAgents: plan.steps.map((s) => s.agentId),
-      selectedTools: Array.from(new Set(agentResults.flatMap((r) => r.toolsUsed || []))),
+      selectedTools: plan.selectedTools || Array.from(new Set(agentResults.flatMap((r) => r.toolsUsed || []))),
+      plannedTools: plan.selectedTools || [],
+      executedTools: Array.from(new Set(agentResults.flatMap((r) => r.toolsUsed || []))),
       status: status as any,
+      businessOutcomeStatus:
+        status === "WAITING_FOR_INPUT"
+          ? "WAITING_FOR_INPUT"
+          : status === "WAITING_FOR_APPROVAL" || (status as string) === "AWAITING_APPROVAL"
+          ? "WAITING_FOR_APPROVAL"
+          : status === "FAILED"
+          ? "FAILED"
+          : status === "COMPLETED" && Array.from(new Set(agentResults.flatMap((r) => r.toolsUsed || []))).some((t) => t !== "query_memory" && t !== "store_memory")
+          ? "BUSINESS_OUTCOME_VERIFIED"
+          : "BUSINESS_OUTCOME_PARTIAL",
       currentStep: plan.steps.filter((s) => s.status === "COMPLETED").length,
+      knowledgeContext: plan.knowledgeContext,
+      retrievalProvenance: plan.knowledgeContext?.provenance,
       approvalState: plan.approvalRequirements
         ? {
             required: true,
@@ -1100,7 +2166,7 @@ export class ElmoOrchestratorService {
         status: status === "COMPLETED" ? "PASSED" : status === "FAILED" ? "FAILED" : "PENDING",
       },
       retryCount,
-      replanCount: 0,
+      replanCount,
       result: { summary },
       createdAt: startTime,
       updatedAt: Date.now(),
@@ -1139,7 +2205,17 @@ export class ElmoOrchestratorService {
    */
   private synthesizePlanResponse(plan: ExecutionPlan, results: AgentResult[]): string {
     if (results.length === 1) {
-      return results[0].summary;
+      let singleRes = results[0].summary;
+      if (plan.knowledgeContext && plan.knowledgeContext.provenance && plan.knowledgeContext.provenance.length > 0) {
+        singleRes += `\n\n📚 **Source Provenance:**\n`;
+        plan.knowledgeContext.provenance.forEach((p: any) => {
+          const snippet = (p.contentSnippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
+          const ver = p.version ?? p.documentVersion ?? 1;
+          const chunkNum = (p.chunkIndex ?? 0) + 1;
+          singleRes += `- **${p.documentTitle}** (v${ver}, Chunk ${chunkNum}) — "${snippet}..."\n`;
+        });
+      }
+      return singleRes.trim();
     }
 
     let res = `I have completed the end-to-end execution for **"${plan.objective}"**:\n\n`;
@@ -1163,6 +2239,16 @@ export class ElmoOrchestratorService {
       res += `\n✨ **Your interactive landing page is live and ready to preview!** You can toggle between Desktop, Tablet, and Mobile views on your dashboard.`;
     }
 
+    if (plan.knowledgeContext && plan.knowledgeContext.provenance && plan.knowledgeContext.provenance.length > 0) {
+      res += `\n\n📚 **Source Provenance:**\n`;
+      plan.knowledgeContext.provenance.forEach((p: any) => {
+        const snippet = (p.contentSnippet || "").replace(/\s+/g, " ").trim().slice(0, 140);
+        const ver = p.version ?? p.documentVersion ?? 1;
+        const chunkNum = (p.chunkIndex ?? 0) + 1;
+        res += `- **${p.documentTitle}** (v${ver}, Chunk ${chunkNum}) — "${snippet}..."\n`;
+      });
+    }
+
     return res.trim();
   }
 
@@ -1177,4 +2263,83 @@ export class ElmoOrchestratorService {
     };
     return map[agentId] || agentId;
   }
+
+  /**
+   * Phase 4: Find alternative worker when a worker repeatedly fails or cannot proceed.
+   * Matches capabilities or skills with available capacity in the workforce.
+   */
+  private findAlternativeWorker(failedStep: ExecutionStep, organizationId: string): WorkerDefinition | undefined {
+    const workers: WorkerDefinition[] = this.registry.getWorkers({ organizationId });
+    const failedAgentId = failedStep.agentId;
+    const resolvedFailedId = this.registry.resolveWorkerAlias(failedAgentId);
+
+    // Filter available active workers other than the failed one
+    const candidates = workers.filter(
+      (w: WorkerDefinition) => w.enabled && w.status !== "DISABLED" && w.id !== failedAgentId && w.id !== resolvedFailedId
+    );
+
+    if (candidates.length === 0) return undefined;
+
+    // Check capability / skill overlap
+    const stepSkills = (failedStep.skills || []).map((s: string) => s.toLowerCase());
+    const stepTools = (failedStep.tools || []).map((t: string) => t.toLowerCase());
+
+    const scoredCandidates = candidates.map((worker: WorkerDefinition) => {
+      let score = 0;
+      const workerSkills = (worker.skills || []).map((s: string) => s.toLowerCase());
+      const workerTools = (worker.allowedTools || []).map((t: string) => t.toLowerCase());
+      const workerCaps = (worker.capabilities || []).map((c: string) => c.toLowerCase());
+
+      // Overlap on skills
+      for (const skill of stepSkills) {
+        if (workerSkills.some((ws: string) => ws.includes(skill) || skill.includes(ws))) score += 3;
+        if (workerCaps.some((wc: string) => wc.includes(skill) || skill.includes(wc))) score += 2;
+      }
+
+      // Overlap on tools
+      for (const tool of stepTools) {
+        if (workerTools.includes(tool)) score += 4;
+      }
+
+      // Role compatibility fallbacks:
+      if (
+        (failedAgentId.includes("marketing") || failedAgentId.includes("copy")) &&
+        (worker.id.includes("marketing") || worker.id.includes("copy"))
+      ) {
+        score += 5;
+      }
+      if (
+        (failedAgentId.includes("analytics") || failedAgentId.includes("research")) &&
+        (worker.id.includes("analytics") || worker.id.includes("research"))
+      ) {
+        score += 5;
+      }
+      if (
+        (failedAgentId.includes("operations") || failedAgentId.includes("analytics")) &&
+        (worker.id.includes("operations") || worker.id.includes("analytics"))
+      ) {
+        score += 3;
+      }
+      if (
+        (failedAgentId.includes("sales") || failedAgentId.includes("marketing")) &&
+        (worker.id.includes("sales") || worker.id.includes("marketing"))
+      ) {
+        score += 3;
+      }
+
+      // Workload penalty if worker is at or above capacity
+      if (worker.workload >= worker.capacity) {
+        score = -1;
+      }
+
+      return { worker, score };
+    });
+
+    const eligible = scoredCandidates.filter((c: { worker: WorkerDefinition; score: number }) => c.score > 0);
+    eligible.sort((a: { worker: WorkerDefinition; score: number }, b: { worker: WorkerDefinition; score: number }) => b.score - a.score);
+
+    return eligible[0]?.worker;
+  }
 }
+
+

@@ -63,6 +63,8 @@ export class VoiceController {
   private currentTranscript = "";
   private lastProcessedUtterance = "";
   private lastProcessedTime = 0;
+  private lastAssistantResponseText = "";
+  private lastAssistantResponseTime = 0;
   private inactivityTimer: NodeJS.Timeout | null = null;
   private utteranceDebounceTimer: NodeJS.Timeout | null = null;
   private isContinuousMode = false;
@@ -249,6 +251,13 @@ export class VoiceController {
 
     // 3. STT Transcript updates (Dual speech trigger alongside VAD)
     this.unsubSTTTranscript = this.stt.onTranscript((text, isFinal) => {
+      const currentState = this.stateManager.getState();
+      // Drop any incoming microphone transcription while ELMO is speaking or processing
+      // This prevents the assistant's speaker voice from feeding back into the microphone
+      if (currentState === "ELMO_SPEAKING" || currentState === "PROCESSING") {
+        return;
+      }
+
       this.currentTranscript = text;
       if (this.onTranscriptUpdate) {
         this.onTranscriptUpdate(text, isFinal);
@@ -256,11 +265,8 @@ export class VoiceController {
 
       if (text.trim().length > 0) {
         this.clearInactivityTimer();
-        const currentState = this.stateManager.getState();
         if (currentState === "LISTENING") {
           this.stateManager.transition("USER_SPEAKING");
-        } else if (currentState === "ELMO_SPEAKING") {
-          this.interrupt();
         }
       }
 
@@ -281,10 +287,27 @@ export class VoiceController {
           // STEP 9: Return automatically to LISTENING for hands-free loop
           this.stateManager.transition("LISTENING");
           this.currentTranscript = "";
-          // Resume STT with active conversational language
-          const activeLang = this.languageContextService.getContext().responseLanguage;
-          const activeTag = LanguageContextService.getBcp47Tag(activeLang);
-          this.stt.start(activeTag).catch(() => {});
+          this.stt.clearTranscript();
+
+          // Acoustic decay cooldown: ensure speaker physical reverberation has dissipated
+          const cooldownMs =
+            typeof process !== "undefined" && process.env?.NODE_ENV === "test" ? 0 : 350;
+          setTimeout(() => {
+            if (
+              !this.isDestroyed &&
+              this.stateManager.getState() === "LISTENING" &&
+              this.isContinuousMode &&
+              !this.isPausedMode
+            ) {
+              this.currentTranscript = "";
+              this.stt.clearTranscript();
+              // Resume STT with active conversational language
+              const activeLang = this.languageContextService.getContext().responseLanguage;
+              const activeTag = LanguageContextService.getBcp47Tag(activeLang);
+              this.stt.start(activeTag).catch(() => {});
+              this.startInactivityTimer();
+            }
+          }, cooldownMs);
         } else {
           this.stateManager.transition("STANDBY");
         }
@@ -383,6 +406,12 @@ export class VoiceController {
     this.sessionManager.recordInterruption();
     this.audioManager.cancelPlayback();
     this.tts.stop();
+    if (this.utteranceDebounceTimer) {
+      clearTimeout(this.utteranceDebounceTimer);
+      this.utteranceDebounceTimer = null;
+    }
+    this.currentTranscript = "";
+    this.stt.clearTranscript();
     this.stateManager.transition("INTERRUPTED");
     setTimeout(() => {
       if (!this.isDestroyed && this.isContinuousMode && !this.isPausedMode) {
@@ -450,6 +479,36 @@ export class VoiceController {
   }
 
   /**
+   * Identifies if incoming speech is an acoustic self-echo from the device's own speakers
+   */
+  private isSelfEcho(spokenText: string): boolean {
+    if (!this.lastAssistantResponseText || Date.now() - this.lastAssistantResponseTime > 12000) {
+      return false;
+    }
+
+    const cleanSpoken = spokenText.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+    const cleanAssistant = this.lastAssistantResponseText.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+
+    if (!cleanSpoken || cleanSpoken.length < 3) return false;
+
+    // Direct containment: spoken text matches or is contained inside assistant's response
+    if (cleanAssistant.includes(cleanSpoken) || cleanSpoken.includes(cleanAssistant)) {
+      return true;
+    }
+
+    // Token overlap: if >65% of words spoken match what ELMO just vocalized
+    const spokenWords = cleanSpoken.split(/\s+/).filter((w) => w.length > 2);
+    if (spokenWords.length >= 2) {
+      const matches = spokenWords.filter((w) => cleanAssistant.includes(w));
+      if (matches.length / spokenWords.length >= 0.65) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Process completed user speech and invoke ELMO intelligence
    */
   public async handleUserUtteranceComplete(explicitText?: string): Promise<void> {
@@ -478,10 +537,23 @@ export class VoiceController {
       return;
     }
 
-    // Prevent immediate duplicate execution if debounced event fires twice
+    // 1. Acoustic self-echo suppression:
+    // Reject any transcribed speech that echoes ELMO's own speaker output
+    if (this.isSelfEcho(spokenText)) {
+      console.warn("[VoiceController] Suppressed acoustic self-echo from speaker output:", spokenText);
+      this.currentTranscript = "";
+      this.stt.clearTranscript();
+      if (this.stateManager.getState() === "USER_SPEAKING") {
+        this.stateManager.transition("LISTENING");
+        this.startInactivityTimer();
+      }
+      return;
+    }
+
+    // 2. Prevent immediate duplicate execution if debounced event fires twice within 8s
     if (
       spokenText.toLowerCase() === this.lastProcessedUtterance.toLowerCase() &&
-      Date.now() - this.lastProcessedTime < 2500
+      Date.now() - this.lastProcessedTime < 8000
     ) {
       return;
     }
@@ -541,6 +613,19 @@ export class VoiceController {
       // STEP 8: Automatic Multilingual Text-To-Speech
       const targetBcp47 = LanguageContextService.getBcp47Tag(responseLang);
       const ttsConfig = { ...this.config, lang: targetBcp47 };
+
+      // Pause STT hardware listening while ELMO is speaking to prevent microphone echo
+      this.stt.stop();
+      this.currentTranscript = "";
+      this.stt.clearTranscript();
+      if (this.utteranceDebounceTimer) {
+        clearTimeout(this.utteranceDebounceTimer);
+        this.utteranceDebounceTimer = null;
+      }
+
+      // Record what assistant said for self-echo suppression
+      this.lastAssistantResponseText = assistantText.toLowerCase().trim();
+      this.lastAssistantResponseTime = Date.now();
 
       this.stateManager.transition("ELMO_SPEAKING");
       this.sessionManager.recordAssistantTurn();

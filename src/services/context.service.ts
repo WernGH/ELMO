@@ -5,6 +5,9 @@ import { ELMO_IDENTITY } from "@/lib/constants";
 import { LanguageContext } from "./language-context.service";
 import { ElmoMemoryService } from "./elmo-memory.service";
 import { ConversationContinuityState } from "@/types/elmo-request.types";
+import { UserContext } from "@/types/user-context.types";
+import { Role, ROLE_PERMISSIONS } from "@/types/organization.types";
+import { CompanyBrainService } from "./company-brain.service";
 
 export interface ContextBuildParams {
   userId: string;
@@ -32,16 +35,17 @@ export class ContextService {
    * Builds the comprehensive executive context for an ELMO session,
    * unifying User Context, Organization, Conversation Continuity, and Selective Memory.
    */
-  public async buildChatContext(params: ContextBuildParams): Promise<ChatContext> {
+  public async buildChatContext(params: ContextBuildParams): Promise<ChatContext & { userContext: UserContext }> {
     const store = MockDataStore.getInstance();
     const limit = params.recentMessagesLimit || 30;
 
-    // 1. Fetch User Information
+    // 1. Fetch User Information & Role Permissions
     const userProfile = store.profiles.get(params.userId);
-    const userRole = store.getOrgRole(params.userId, params.organizationId) || "owner";
+    const userRole = (store.getOrgRole(params.userId, params.organizationId) || "owner") as Role;
+    const permissions = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS.owner;
     const userObj = store.users.get(params.userId);
 
-    const userContext = {
+    const userSummary = {
       id: params.userId,
       displayName: userProfile?.display_name || "Executive Superior",
       email: userObj?.email || "founder@elmo-ai.com",
@@ -67,25 +71,31 @@ export class ContextService {
       title: conv?.title || "Executive Strategy Session",
     };
 
-    // 4. Fetch Chronological Recent Messages
+    // 4. Fetch Chronological Messages & Apply Safe Context Windowing
     const rawMessages = store.queryMessagesWithRLS(
       params.userId,
       params.organizationId,
       params.conversationId
     );
-    const recentMessages = rawMessages
-      .slice(-limit)
-      .map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }));
+    const mappedMessages = rawMessages.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+
+    // Section 12: Context Window / Token Management Compactor
+    const compactedMessages = this.compactConversationHistory(mappedMessages, limit);
 
     // 5. Track & Carry Forward Conversation Continuity Context across turns
-    const continuity = this.resolveConversationContinuity(recentMessages, params.currentEntities);
+    const continuity = this.resolveConversationContinuity(compactedMessages, params.currentEntities);
 
-    // 6. Selective Memory & Company Brain Handoff (Relevance-based, no full DB dump)
+    // 6. Selective Memory & Company Brain Handoff (Relevance-based, zero whole-DB dumps)
     const memoryService = ElmoMemoryService.getInstance();
-    const query = params.messageQuery || continuity.activeTopic || continuity.activeTargetAudience || "";
+    const query =
+      params.messageQuery ||
+      continuity.activeIndustry ||
+      continuity.activeTopic ||
+      continuity.activeTargetAudience ||
+      "";
     let memories: string[] = [];
 
     if (query && query.trim().length > 2) {
@@ -104,32 +114,111 @@ export class ContextService {
       }
     }
 
+    // 6b. Retrieve Company Brain Dynamic Context with Strict Priority Hierarchy
+    const brainService = CompanyBrainService.getInstance();
+    let relevantBusinessContext: any = undefined;
+    try {
+      relevantBusinessContext = await brainService.retrieveRelevantBusinessContext({
+        userId: params.userId,
+        organizationId: params.organizationId,
+        requestText: params.messageQuery || continuity.activeTopic || "",
+        explicitOverrides: {
+          industry: continuity.activeIndustry,
+          targetAudience: continuity.activeTargetAudience,
+        },
+      });
+
+      if (relevantBusinessContext?.memoriesInjected && Array.isArray(relevantBusinessContext.memoriesInjected)) {
+        for (const mem of relevantBusinessContext.memoriesInjected) {
+          if (!memories.includes(mem)) {
+            memories.push(mem);
+          }
+        }
+      }
+    } catch {
+      // Safe fallback if CompanyBrainService fails or tables uninitialized
+    }
+
+    // Canonical UserContext struct conforming to Section 3
+    const userContext: UserContext = {
+      userId: params.userId,
+      organizationId: params.organizationId,
+      role: userRole,
+      permissions,
+      activeWorkspace: org?.slug || "enterprise",
+      conversationId: params.conversationId,
+      recentMessages: compactedMessages,
+      language: params.languageContext?.languageCode || params.languageContext?.responseLanguage || "en",
+      timezone: (orgSettings.timezone as string) || "UTC",
+    };
+
     // 7. Construct Unified AI CEO System Instruction
     const systemInstruction = this.constructELMOCEOSystemInstruction({
-      user: userContext,
+      user: userSummary,
       organization: orgContext,
       conversation: conversationContext,
       languageContext: params.languageContext,
       continuity,
       memories,
+      businessContext: relevantBusinessContext?.formattedContextString,
     });
 
     return {
-      user: userContext,
+      user: userSummary,
       organization: orgContext,
       conversation: conversationContext,
-      recentMessages,
+      recentMessages: compactedMessages,
       systemInstruction,
       memories,
       activeContinuity: continuity as unknown as Record<string, unknown>,
+      userContext,
+      businessContext: relevantBusinessContext,
     };
   }
 
   /**
-   * Resolves conversational continuity by scanning recent user messages for topics,
-   * target audiences, and directives, merging them into an active working context.
+   * Section 12: Context Window & Token Compactor
+   * Summarizes older history when conversation exceeds bounds while preserving facts verbatim.
    */
-  private resolveConversationContinuity(
+  public compactConversationHistory(
+    messages: { role: MessageRole; content: string }[],
+    limit = 25
+  ): { role: MessageRole; content: string }[] {
+    if (messages.length <= limit) {
+      return messages;
+    }
+
+    // Keep the most recent `limit - 2` messages verbatim
+    const olderMessages = messages.slice(0, messages.length - (limit - 2));
+    const recentSlice = messages.slice(messages.length - (limit - 2));
+
+    // Extract core facts from older messages to summarize
+    const extractedFacts: string[] = [];
+    for (const msg of olderMessages) {
+      if (msg.role === "user") {
+        const t = msg.content;
+        if (/(target|industry|business|product|funnel|offer|audience)/i.test(t)) {
+          extractedFacts.push(t.slice(0, 100));
+        }
+      }
+    }
+
+    const summaryContent =
+      `[CONTEXT SUMMARY: Earlier discussion (${olderMessages.length} turns) covered: ` +
+      (extractedFacts.length > 0 ? extractedFacts.slice(-3).join(" | ") : "operational orientation and planning") +
+      `.]`;
+
+    return [
+      { role: "system" as MessageRole, content: summaryContent },
+      ...recentSlice,
+    ];
+  }
+
+  /**
+   * Resolves conversational continuity by scanning recent user messages for topics,
+   * target audiences, industries, sections, and directives, merging them into an active working context.
+   */
+  public resolveConversationContinuity(
     recentMessages: { role: MessageRole; content: string }[],
     currentEntities?: Record<string, unknown>
   ): ConversationContinuityState {
@@ -144,17 +233,34 @@ export class ContextService {
       const text = msg.content;
       const lower = text.toLowerCase();
 
+      // Industry detection across all domains
+      if (/\b(dental|dentist)\b/i.test(lower)) continuity.activeIndustry = "Dental";
+      else if (/\b(insurance|insurans)\b/i.test(lower)) continuity.activeIndustry = "Insurance";
+      else if (/\b(restaurant|restoran|cafe|bistro|f&b)\b/i.test(lower)) continuity.activeIndustry = "Restaurant";
+      else if (/\b(coaching|coach|mentor)\b/i.test(lower)) continuity.activeIndustry = "Coaching";
+      else if (/\b(saas|software)\b/i.test(lower)) continuity.activeIndustry = "SaaS";
+      else if (/\b(ecommerce|e-commerce|online store)\b/i.test(lower)) continuity.activeIndustry = "Ecommerce";
+      else if (/\b(agency|agensi)\b/i.test(lower)) continuity.activeIndustry = "Agency";
+      else if (/\b(healthcare|clinic|klinik|perubatan)\b/i.test(lower)) continuity.activeIndustry = "Healthcare";
+      else if (/\b(property|real estate|hartanah)\b/i.test(lower)) continuity.activeIndustry = "Property";
+
       // Topic / Business detection
       const bizMatch = text.match(/(?:for my|about|bisnes|perniagaan)\s+([^,.]+?)(?:\s+(?:targeting|for|untuk)|$)/i);
       if (bizMatch) {
         continuity.activeTopic = bizMatch[1].trim();
       } else if (!continuity.activeTopic && (lower.includes("landing page") || lower.includes("landing"))) {
-        continuity.activeTopic = "landing page";
+        continuity.activeTopic = continuity.activeIndustry ? `${continuity.activeIndustry} landing page` : "landing page";
       }
 
       // Target Audience detection
       const audMatch = text.match(/(?:target(?:ing)?|fokus on|focus on|sasaran|untuk)\s+([^,.]+)/i);
       if (audMatch) continuity.activeTargetAudience = audMatch[1].trim();
+
+      // Section detection (Reference Resolution: "the hero", "the cta", "the headline")
+      if (lower.includes("headline")) continuity.activeSection = "headline";
+      else if (lower.includes("hero")) continuity.activeSection = "hero";
+      else if (lower.includes("cta") || lower.includes("button")) continuity.activeSection = "cta";
+      else if (lower.includes("testimonial")) continuity.activeSection = "testimonials";
 
       // Page / Funnel Type
       if (lower.includes("landing page") || lower.includes("landing")) continuity.activePageType = "landing";
@@ -162,16 +268,26 @@ export class ContextService {
       else if (lower.includes("opt-in") || lower.includes("lead magnet")) continuity.activePageType = "opt-in";
 
       // Style
-      if (lower.includes("premium") || lower.includes("lebih premium") || lower.includes("dark mode")) {
+      if (lower.includes("dark mode") || lower.includes("darker style") || lower.includes("gelap")) {
+        continuity.activeStyle = "dark";
+      } else if (lower.includes("premium") || lower.includes("lebih premium") || lower.includes("luxury")) {
         continuity.activeStyle = "premium";
       }
     }
 
     // Overlay current entities if provided
     if (currentEntities) {
-      if (currentEntities.targetAudience) continuity.activeTargetAudience = String(currentEntities.targetAudience);
-      if (currentEntities.topic) continuity.activeTopic = String(currentEntities.topic);
-      if (currentEntities.pageType) continuity.activePageType = String(currentEntities.pageType);
+      if (currentEntities.industry) continuity.activeIndustry = String(currentEntities.industry);
+      if (currentEntities.targetAudience || currentEntities.audience) {
+        continuity.activeTargetAudience = String(currentEntities.targetAudience || currentEntities.audience);
+      }
+      if (currentEntities.topic || currentEntities.business) {
+        continuity.activeTopic = String(currentEntities.topic || currentEntities.business);
+      }
+      if (currentEntities.pageType || currentEntities.page) {
+        continuity.activePageType = String(currentEntities.pageType || currentEntities.page);
+      }
+      if (currentEntities.sectionType) continuity.activeSection = String(currentEntities.sectionType);
       if (currentEntities.style) continuity.activeStyle = String(currentEntities.style);
     }
 
@@ -206,6 +322,7 @@ export class ContextService {
     languageContext?: LanguageContext;
     continuity?: ConversationContinuityState;
     memories?: string[];
+    businessContext?: string;
   }): string {
     const targetLang = context.languageContext?.responseLanguage;
     const isOverride = context.languageContext?.isExplicitOverride;
@@ -223,12 +340,10 @@ export class ContextService {
       "  * French, German, Hindi, Portuguese, Russian, Korean, Italian, etc. -> Respond in that same language.\n" +
       "- ZERO ENGLISH INTERMEDIARY: Comprehend and generate responses directly in the target language. NEVER translate into English first.\n" +
       "- TRANSLATION VS CONVERSATION:\n" +
-      "  * If the user explicitly asks for a translation (e.g., 'Translate this into Japanese', 'Terjemahkan ke Bahasa Melayu', '请翻译成中文'), perform an accurate executive translation of the text.\n" +
-      "  * If the user simply asks a question in another language, ANSWER the question in that language. Do not translate the question.\n" +
-      "- CLARIFICATION BEHAVIOR:\n" +
-      "  * If a user's request is ambiguous or missing critical business details, ask a concise clarifying question in the user's current response language.\n" +
+      "  * If the user explicitly asks for a translation, perform an accurate executive translation.\n" +
+      "  * If the user asks a question, ANSWER the question in that language.\n" +
       "- NATURAL CODE-MIXED TEXT (CODE-SWITCHING):\n" +
-      "  * If the user writes in code-mixed language (e.g. Manglish / Bahasa Rojak like 'Make the headline lebih premium and fokus on property agents', 'ELMO, buat landing page untuk property agent'), understand the intent seamlessly and respond naturally.\n" +
+      "  * If the user writes in code-mixed language (e.g. Manglish / Bahasa Rojak like 'Make the headline lebih premium and change the CTA', 'ELMO, buat landing page untuk insurance agent'), understand the intent seamlessly and respond naturally.\n" +
       "- EXPLICIT DIRECTIVES:\n" +
       "  * User instructions like 'Reply in English', 'Jawab dalam Bahasa Melayu', or '请用中文回答' take absolute priority.";
 
@@ -242,72 +357,59 @@ export class ContextService {
     let continuitySection = "";
     if (context.continuity) {
       const parts: string[] = [];
+      if (context.continuity.activeIndustry) parts.push(`Active Industry: "${context.continuity.activeIndustry}"`);
       if (context.continuity.activeTopic) parts.push(`Active Business / Topic: "${context.continuity.activeTopic}"`);
       if (context.continuity.activeTargetAudience) parts.push(`Active Target Audience: "${context.continuity.activeTargetAudience}"`);
       if (context.continuity.activePageType) parts.push(`Active Page Type: "${context.continuity.activePageType}"`);
+      if (context.continuity.activeSection) parts.push(`Active Section / Focus: "${context.continuity.activeSection}"`);
       if (context.continuity.activeStyle) parts.push(`Active Tone / Style: "${context.continuity.activeStyle}"`);
       if (parts.length > 0) {
-        continuitySection = `\n## ACTIVE CONVERSATION CONTINUITY\n` +
-          `Maintain context across turns. If the user issues a follow-up modification (e.g. "Target property agents", "Make it more premium"), apply it to the ongoing project context:\n` +
-          parts.map((p) => `- ${p}`).join("\n") + "\n";
+        continuitySection =
+          `\n## ACTIVE CONVERSATION CONTINUITY\n` +
+          `Maintain context across turns. If the user issues a follow-up modification (e.g. "the hero", "change the CTA", "make it more premium"), apply it to the ongoing project context:\n` +
+          parts.map((p) => `- ${p}`).join("\n") +
+          `\n`;
       }
     }
 
-    // Memory Context Section
+    // Long-Term Semantic Memory Section (Company Brain)
     let memorySection = "";
     if (context.memories && context.memories.length > 0) {
-      memorySection = `\n## RELEVANT COMPANY BRAIN KNOWLEDGE\n` +
-        `Use this confirmed organizational memory where relevant without re-asking the user:\n` +
-        context.memories.map((m) => `- ${m}`).join("\n") + "\n";
+      memorySection =
+        `\n## 5. PERSISTENT COMPANY BRAIN (SELECTIVE RELEVANT MEMORY)\n` +
+        `The following verified company facts have been retrieved for this discussion. Integrate them seamlessly:\n` +
+        context.memories.map((m) => `- ${m}`).join("\n") +
+        `\n`;
     }
 
-    // Temporal Anchor (Real-World System Time)
-    const now = new Date();
-    const formattedDate = now.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const formattedTime = now.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    // Dynamic Business Context Section (7 Dimensions of Company Brain)
+    let businessContextSection = "";
+    if (context.businessContext && context.businessContext.trim().length > 0) {
+      businessContextSection = `\n${context.businessContext}\n`;
+    }
 
     return (
-      `You are ELMO, the AI CEO and intelligent conversational AI assistant of the autonomous enterprise operating system.\n` +
-      `System Tag: ${ELMO_IDENTITY.systemTag}\n\n` +
-      `## 0. CURRENT TEMPORAL ANCHOR & REAL-WORLD CLOCK\n` +
-      `- Today's Current Date: ${formattedDate}\n` +
-      `- Current System Time: ${formattedTime} (ISO: ${now.toISOString()})\n` +
-      `- When asked about today's date, day, month, year, or time, answer directly and accurately using this real-world date.\n\n` +
-      `## 1. CORE CONVERSATIONAL INTELLIGENCE PRINCIPLES\n` +
-      `- Understand the user's actual meaning before responding.\n` +
-      `- Respond directly to the user's current message.\n` +
-      `- Consider recent conversation context and maintain continuity throughout the conversation.\n` +
-      `- DO NOT use generic assistant responses when a specific natural response is possible.\n` +
-      `- NEVER repeatedly respond with generic phrases like "How can I help you?", "I'm here to assist you", or "How may I help you today?".\n` +
-      `- For casual conversation, respond naturally and conversationally (e.g. if the user asks "How are you?" or "Sudah makan?", respond warmly like "I'm operating at peak performance! How can we advance today?").\n` +
-      `- For business questions, advice, or ideas (e.g., "What are three ways I can improve my landing page?", "What should I improve on my funnel?", "Give me three headline ideas"), ANSWER DIRECTLY and CONCISELY with high-value actionable advice. DO NOT output complex multi-agent execution plans for informational questions.\n` +
-      `- For complex multi-step execution tasks (e.g. building landing pages, setting up funnels), provide clear strategic direction.\n` +
-      `- Do not repeat the same response unnecessarily.\n\n` +
-      `## 2. ORGANIZATIONAL HIERARCHY & BOUNDARIES\n` +
+      `You are ELMO, the AI CEO, unified AI Operating System and executive intelligence for ${context.organization.name}.\n\n` +
+      `## 1. USER & TENANT HIERARCHY\n` +
+      `- User: ${context.user.displayName} (Role: ${context.user.role.toUpperCase()})\n` +
       `- You are subordinate directly to the human owner (${context.user.displayName}, Role: ${context.user.role}).\n` +
       `- Organization: "${context.organization.name}". Current Autonomy Mode: "${context.organization.autonomyMode.toUpperCase()}".\n` +
+      `- Session Title: "${context.conversation.title}"\n` +
       `- NEVER pretend an action was executed or completed when it was not.\n` +
       `- CLEARLY DISTINGUISH between thinking/planning and actual execution.\n` +
-      `- Specialist AI Employees (workforce) are NOT currently connected for autonomous execution without approval.\n` +
-      `- CLEARLY DISTINGUISH between direct advisory answers and actual execution.\n` +
-      `- UNIVERSAL BUSINESS-AWARE REASONING: Reason effectively across all business domains: property, insurance, mortgage, coaching, consulting, agencies, SaaS, professional services, local businesses, and e-commerce. Never assume property agents or any single industry unless explicitly specified by the user or present in active Company Brain memory.\n\n` +
-      `## 3. INTELLIGENT FUNNEL & MARKETING SAAS PRINCIPLES\n` +
-      `- You serve as the conversational AI operating layer of an all-in-one funnel and marketing automation SaaS.\n` +
-      `- Core funnel concepts you reason over: Lead Generation, Webinar, Coaching, Course, Product, Consultation, Lead Magnet, E-commerce, SaaS.\n` +
-      `- Page and section structure: Hero, Problem, Solution, Benefits, Features, Testimonials, Social Proof, Pricing, FAQ, CTA, Forms, Countdown, Guarantee, Footer.\n` +
-      `- Contact and lifecycle pipeline: Form Submission -> Contact Created -> Tag Added -> Journey Event Logged -> Automated Sequence Triggered.\n` +
-      `${continuitySection}` +
-      `${memorySection}` +
-      `${languageDirective}\n\n` +
-      `Stay in character at all times as ELMO, intelligent conversational AI assistant.`
+      `- Specialist AI Employees (workforce) are NOT currently connected for autonomous execution without approval.\n\n` +
+      `## 2. UNIVERSAL BUSINESS-AWARE REASONING & INDUSTRY NEUTRALITY\n` +
+      `- Reason effectively across all business domains: insurance, restaurant, coaching, consulting, agencies, SaaS, professional services, local businesses, e-commerce, healthcare, and property.\n` +
+      `- NEVER assume property agents or any single industry unless explicitly specified by the user, found in conversation continuity, or retrieved from active Company Brain memory.\n` +
+      `- AMBIGUITY HANDLING: When a request is completely underspecified (e.g. "Create a website" with zero context), check Company Brain and conversation context first. If still ambiguous, ask a helpful, concise clarifying question rather than guessing.\n\n` +
+      `## 3. GUARDRAIL & CAPABILITY CLASSIFICATION\n` +
+      `- Distinguish clearly between INFORMATION, RECOMMENDATION, PLANNING, and ACTION.\n` +
+      `- When a user asks an analytical or informational question (e.g., "Why are my leads not converting?"), provide insightful diagnosis and analysis. Do NOT immediately trigger build actions or assume execution.\n\n` +
+      languageDirective +
+      continuitySection +
+      memorySection +
+      businessContextSection +
+      `\nDeliver crisp, structured, executive-grade responses.`
     );
   }
 }

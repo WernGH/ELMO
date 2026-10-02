@@ -21,9 +21,13 @@ import { LanguageDetectionService, ConversationalIntent } from "./voice/language
 import { ElmoIntentService, ElmoSaaSIntent } from "./elmo-intent.service";
 import { ElmoFunnelAgentService } from "./elmo-funnel-agent.service";
 import { ElmoOrchestratorService } from "./agentic/elmo-orchestrator.service";
+import { WorkforceRegistryService } from "./agentic/workforce-registry.service";
+import { AgentRegistryService } from "./agentic/agent-registry.service";
 import { ElmoMemoryService } from "./elmo-memory.service";
 import { LLMProvider, LLMProviderFactory } from "./llm-provider.service";
 import { GeminiService } from "./gemini.service";
+import { ExecutiveBriefingService } from "./executive-briefing.service";
+import { ExecutiveBriefing } from "@/types/briefing.types";
 import {
   AIUsageRecord,
   GeminiResponse,
@@ -34,6 +38,8 @@ import {
 } from "@/types/chat.types";
 import { ElmoRequest } from "@/types/elmo-request.types";
 import { MockDataStore } from "@/lib/supabase/mock-store";
+import { UserContext, UserGoal, GuardrailCategory } from "@/types/user-context.types";
+import { AmbiguityDetectorService } from "./ambiguity-detector.service";
 
 export interface ProcessMessageParams {
   userId: string;
@@ -62,6 +68,12 @@ export interface TurnTelemetry {
   timestamp: number;
   latencyMs?: number;
   elmoRequest?: ElmoRequest;
+  userGoal?: UserGoal;
+  guardrailCategory?: GuardrailCategory;
+  userContext?: UserContext;
+  isAmbiguous?: boolean;
+  clarificationQuestion?: string;
+  role?: string;
 }
 
 export interface ELMOResponse {
@@ -101,6 +113,12 @@ export interface ELMOResponse {
   executionPlan?: unknown;
   pendingApproval?: unknown;
   elmoRequest?: ElmoRequest;
+  briefingPayload?: ExecutiveBriefing;
+  userGoal?: UserGoal;
+  guardrailCategory?: GuardrailCategory;
+  userContext?: UserContext;
+  isAmbiguous?: boolean;
+  clarificationQuestion?: string;
 }
 
 export type StreamEventType =
@@ -247,6 +265,7 @@ export class ELMOIntelligenceService {
       isCodeSwitched: Boolean(langDetection.isMixed),
       intent: saasIntentAnalysis.intent,
       executionCategory: saasIntentAnalysis.executionCategory || "direct_response",
+      guardrailCategory: saasIntentAnalysis.guardrailCategory || "information",
       context: { turnMode: "CONVERSATIONAL" },
       businessContext: {},
       entities: saasIntentAnalysis.entities,
@@ -254,6 +273,7 @@ export class ELMOIntelligenceService {
       timeConstraint: saasIntentAnalysis.timeConstraint,
       goalLikeRequest: Boolean(saasIntentAnalysis.goalData?.isGoal),
       goalData: saasIntentAnalysis.goalData,
+      userGoal: saasIntentAnalysis.userGoal,
       requiresAction: saasIntentAnalysis.requiresAction,
       requiresPlanning: Boolean(saasIntentAnalysis.requiresPlanning),
       requiresApproval: isDestructive,
@@ -281,6 +301,7 @@ export class ELMOIntelligenceService {
           intent: langDetection.intent,
           saas_intent: saasIntentAnalysis.intent,
           execution_category: saasIntentAnalysis.executionCategory,
+          guardrail_category: saasIntentAnalysis.guardrailCategory,
           is_complex_task: saasIntentAnalysis.isComplexTask,
           requires_action: saasIntentAnalysis.requiresAction,
           requires_planning: saasIntentAnalysis.requiresPlanning,
@@ -306,6 +327,7 @@ export class ELMOIntelligenceService {
       currentEntities: saasIntentAnalysis.entities,
       messageQuery: trimmedMessage,
     });
+    elmoRequest.userContext = chatContext.userContext;
 
     // Background semantic memory extraction for Company Brain
     try {
@@ -320,9 +342,353 @@ export class ELMOIntelligenceService {
       // Non-blocking background extraction
     }
 
+    // Section 13 & 14: Permission Enforcement
+    const userRole = chatContext.userContext.role;
+    const permissions = chatContext.userContext.permissions;
+    if (saasIntentAnalysis.requiresAction && !permissions.canDirectELMO) {
+      const permissionMsg = `You currently have '${userRole}' permissions in ${chatContext.organization.name}. Your role permits viewing analytics, reports, and conversational inquiries, but executing actions or modifying assets requires 'member', 'admin', or 'owner' privileges.`;
+
+      const assistantMsgRes = await this.chatService.createMessage(
+        params.userId,
+        params.organizationId,
+        {
+          conversationId: convId,
+          role: "assistant",
+          content: permissionMsg,
+          metadata: {
+            input_mode: inputMode,
+            role: userRole,
+            permission_denied: true,
+            status: "complete",
+          },
+        }
+      );
+
+      const latencyMs = Date.now() - startTime;
+      const turnTelemetry: TurnTelemetry = {
+        inputMode,
+        userInput: trimmedMessage,
+        detectedLanguage: langDetection.languageName,
+        languageCode: langDetection.languageCode,
+        languageName: langDetection.languageName,
+        confidence: 0.98,
+        conversationId: convId,
+        intent: langDetection.intent,
+        saasIntent: saasIntentAnalysis.intent,
+        elmoResponse: permissionMsg,
+        timestamp: Date.now(),
+        latencyMs,
+        elmoRequest,
+        userContext: chatContext.userContext,
+        role: userRole,
+      };
+      this.publishTelemetry(turnTelemetry);
+
+      return {
+        conversationId: convId,
+        userMessage: userMsgRes.data,
+        assistantMessage: assistantMsgRes.data!,
+        text: permissionMsg,
+        type: "ANSWER",
+        responseType: "ANSWER",
+        content: permissionMsg,
+        languageCode: langCtx.languageCode || "en",
+        inputMode,
+        detectedLanguage: langDetection.languageName,
+        detectedLanguageCode: langDetection.languageCode,
+        responseLanguage: langCtx.responseLanguage,
+        confidence: 0.98,
+        intent: langDetection.intent,
+        saasIntent: saasIntentAnalysis.intent,
+        model: "elmo-security",
+        provider: "internal",
+        isExplicitOverride: false,
+        isTranslation: false,
+        latencyMs,
+        userContext: chatContext.userContext,
+      };
+    }
+
+    // Section 7: Ambiguity Handling (Strict Priority Hierarchy)
+    if (saasIntentAnalysis.userGoal?.ambiguityDetected) {
+      const ambiguityResult = AmbiguityDetectorService.getInstance().resolveContextHierarchy({
+        message: trimmedMessage,
+        entities: saasIntentAnalysis.entities,
+        companyBrainContext: {
+          industry: (chatContext.businessContext as any)?.activeIndustry,
+          targetAudience: (chatContext.businessContext as any)?.targetAudience,
+          memories: chatContext.memories?.map((m) => ({ content: m })),
+        },
+        conversationContinuity: chatContext.activeContinuity as any,
+      });
+
+      if (ambiguityResult.isAmbiguous && ambiguityResult.clarificationQuestion) {
+        const clarificationText = ambiguityResult.clarificationQuestion;
+        const assistantMsgRes = await this.chatService.createMessage(
+          params.userId,
+          params.organizationId,
+          {
+            conversationId: convId,
+            role: "assistant",
+            content: clarificationText,
+            metadata: {
+              input_mode: inputMode,
+              is_clarification: true,
+              ambiguity_detected: true,
+              status: "complete",
+            },
+          }
+        );
+
+        const latencyMs = Date.now() - startTime;
+        const turnTelemetry: TurnTelemetry = {
+          inputMode,
+          userInput: trimmedMessage,
+          detectedLanguage: langDetection.languageName,
+          languageCode: langDetection.languageCode,
+          languageName: langDetection.languageName,
+          confidence: 0.98,
+          conversationId: convId,
+          intent: "question",
+          saasIntent: saasIntentAnalysis.intent,
+          elmoResponse: clarificationText,
+          timestamp: Date.now(),
+          latencyMs,
+          elmoRequest,
+          userContext: chatContext.userContext,
+          isAmbiguous: true,
+          clarificationQuestion: clarificationText,
+        };
+        this.publishTelemetry(turnTelemetry);
+
+        return {
+          conversationId: convId,
+          userMessage: userMsgRes.data,
+          assistantMessage: assistantMsgRes.data!,
+          text: clarificationText,
+          type: "QUESTION",
+          responseType: "QUESTION",
+          content: clarificationText,
+          languageCode: langCtx.languageCode || "en",
+          inputMode,
+          detectedLanguage: langDetection.languageName,
+          detectedLanguageCode: langDetection.languageCode,
+          responseLanguage: langCtx.responseLanguage,
+          confidence: 0.98,
+          intent: "question",
+          saasIntent: saasIntentAnalysis.intent,
+          model: "gemini-3-flash-preview",
+          provider: "gemini",
+          isExplicitOverride: false,
+          isTranslation: false,
+          latencyMs,
+          userContext: chatContext.userContext,
+          isAmbiguous: true,
+          clarificationQuestion: clarificationText,
+        };
+      }
+    }
+
     const funnelAgent = ElmoFunnelAgentService.getInstance();
     const hasPendingConfirmation = funnelAgent.hasPendingConfirmation(params.organizationId, params.userId);
     const lowerMessage = trimmedMessage.toLowerCase();
+
+    // =========================================================================
+    // 6a. ELMO Executive Morning Briefing Handling
+    // =========================================================================
+    const isBriefingRequest =
+      saasIntentAnalysis.intent === "executive_briefing" ||
+      /^(good morning elmo|morning elmo|good morning|what's happening this morning|whats happening this morning|give me my morning briefing|morning briefing|give me my briefing|executive briefing|morning update|daily briefing|what should i do today|todays focus|today's focus|refresh my briefing|refresh briefing)\b/i.test(
+        lowerMessage
+      ) ||
+      /^(selamat pagi elmo|taklimat pagi|taklimat eksekutif|apa berlaku pagi ini|apa fokus hari ini)\b/i.test(
+        lowerMessage
+      ) ||
+      /^(早安 elmo|早晨汇报|今日早报|今日简报|今天有什么汇报|今日焦点)\b/i.test(
+        lowerMessage
+      ) ||
+      /^(buenos días elmo|buenos dias elmo|informe matutino)\b/i.test(
+        lowerMessage
+      );
+
+    if (isBriefingRequest) {
+      const briefingService = ExecutiveBriefingService.getInstance();
+      const forceRefresh = lowerMessage.includes("refresh");
+      const briefing = await briefingService.getOrGenerateBriefing({
+        userId: params.userId,
+        organizationId: params.organizationId,
+        language: langCtx.responseLanguage || "en",
+        forceRefresh,
+      });
+
+      // Spoken briefing for voice mode, structured markdown for text mode
+      let responseText: string;
+      if (inputMode === "voice") {
+        responseText = briefing.spokenBriefing;
+      } else {
+        responseText = this.formatMarkdownBriefing(briefing, chatContext.organization?.name || "Enterprise");
+      }
+
+      const assistantMsgRes = await this.chatService.createMessage(
+        params.userId,
+        params.organizationId,
+        {
+          conversationId: convId,
+          role: "assistant",
+          content: responseText,
+          metadata: {
+            input_mode: inputMode,
+            inputMethod: inputMode,
+            voiced: inputMode === "voice",
+            language_code: langCtx.languageCode,
+            response_language: langCtx.responseLanguage,
+            intent: "question",
+            saas_intent: "executive_briefing",
+            briefingId: briefing.id,
+            briefingPayload: briefing,
+          },
+        }
+      );
+
+      const latencyMs = Date.now() - startTime;
+      const elmoRes: ELMOResponse = {
+        conversationId: convId,
+        userMessage: userMsgRes.data,
+        assistantMessage: assistantMsgRes.data!,
+        text: responseText,
+        type: "ANSWER",
+        responseType: "ANSWER",
+        content: responseText,
+        languageCode: langCtx.languageCode || "en",
+        inputMode,
+        detectedLanguage: langDetection.languageName,
+        detectedLanguageCode: langDetection.languageCode,
+        responseLanguage: langCtx.responseLanguage,
+        confidence: 0.98,
+        intent: "question",
+        saasIntent: "executive_briefing",
+        model: "gemini-3-flash-preview",
+        provider: "gemini",
+        isExplicitOverride: Boolean(langCtx.isExplicitOverride),
+        isTranslation: false,
+        latencyMs,
+        visualState: "SUCCESS",
+        briefingPayload: briefing,
+      };
+
+      this.publishTelemetry({
+        inputMode,
+        userInput: trimmedMessage,
+        detectedLanguage: langDetection.languageName,
+        languageCode: langDetection.languageCode,
+        languageName: langDetection.languageName,
+        confidence: 0.98,
+        conversationId: convId,
+        intent: "question",
+        saasIntent: "executive_briefing",
+        elmoResponse: responseText,
+        timestamp: Date.now(),
+        latencyMs,
+        elmoRequest,
+      });
+
+      return elmoRes;
+    }
+
+    // =========================================================================
+    // 6b. ELMO AI Workforce Status & Telemetry Handling
+    // =========================================================================
+    const isWorkforceInquiry =
+      saasIntentAnalysis.isWorkforceQuery ||
+      /(workforce status|ai employees status|worker status|ai team status|how (is|are) (my|our) (workers|workforce|ai team|specialists)|status pekerja|status tenaga kerja|siapa buat copy|who is working on)/i.test(
+        lowerMessage
+      );
+
+    if (isWorkforceInquiry) {
+      const workforceRegistry = WorkforceRegistryService.getInstance();
+      const agentRegistry = AgentRegistryService.getInstance();
+      const workers = agentRegistry.getWorkers({ organizationId: params.organizationId });
+      const metrics = workforceRegistry.getWorkforcePerformanceMetrics(params.organizationId);
+      const activeAssignments = workforceRegistry.getActiveWorkerAssignments(params.organizationId);
+      const recentHandoffs = workforceRegistry.getWorkerHandoffs(params.organizationId).slice(-5);
+
+      const isMalay = langCtx.responseLanguage === "ms" || langDetection.languageCode === "ms";
+      let responseText: string;
+
+      if (isMalay) {
+        responseText = `**Laporan Status Tenaga Kerja AI ELMO:**\n\n` +
+          `• **Pakar Aktif**: ${workers.filter((w) => w.enabled).length} daripada ${workers.length} pekerja beroperasi secara optimum.\n` +
+          `• **Kapasiti Keseluruhan**: ${workers.reduce((acc, w) => acc + w.capacity, 0)} slot tugas (${activeAssignments.length} tugasan aktif sedang berjalan).\n` +
+          `• **Kadar Kebolehpercayaan**: ${(metrics.reliabilityRate * 100).toFixed(1)}% dengan purata masa pelaksanaan ${Math.round(metrics.averageExecutionTimeMs / 1000)}s.\n` +
+          `• **Serahan Kerja Terkini**: ${recentHandoffs.length} kontrak serahan berstruktur disahkan bebas halangan.\n\n` +
+          `Semua pekerja pakar bersedia menerima arahan strategik anda.`;
+      } else {
+        responseText = `**ELMO Governed AI Workforce Status Report:**\n\n` +
+          `• **Active Specialists**: ${workers.filter((w) => w.enabled).length} of ${workers.length} specialists online and governed under ELMO Central Brain.\n` +
+          `• **Workforce Capacity**: ${workers.reduce((acc, w) => acc + w.capacity, 0)} slots (${activeAssignments.length} active assignments in progress).\n` +
+          `• **Performance Reliability**: ${(metrics.reliabilityRate * 100).toFixed(1)}% (Avg duration: ${(metrics.averageExecutionTimeMs / 1000).toFixed(1)}s).\n` +
+          `• **Structured Handoffs**: ${metrics.totalHandoffs} verified contracts completed with zero unmediated chatter.\n\n` +
+          `Your workforce is operating smoothly and standing by for business objectives.`;
+      }
+
+      const assistantMsgRes = await this.chatService.createMessage(
+        params.userId,
+        params.organizationId,
+        {
+          conversationId: convId,
+          role: "assistant",
+          content: responseText,
+          metadata: {
+            input_mode: inputMode,
+            workforce_telemetry: true,
+            status: "complete",
+          },
+        }
+      );
+
+      const latencyMs = Date.now() - startTime;
+      const elmoRes: ELMOResponse = {
+        conversationId: convId,
+        userMessage: userMsgRes.data,
+        assistantMessage: assistantMsgRes.data!,
+        text: responseText,
+        type: "ANSWER",
+        responseType: "ANSWER",
+        content: responseText,
+        languageCode: langCtx.languageCode || "en",
+        inputMode,
+        detectedLanguage: langDetection.languageName,
+        detectedLanguageCode: langDetection.languageCode,
+        responseLanguage: langCtx.responseLanguage,
+        confidence: 0.98,
+        intent: "question",
+        saasIntent: "system_status",
+        model: "elmo-workforce-engine",
+        provider: "internal",
+        isExplicitOverride: Boolean(langCtx.isExplicitOverride),
+        isTranslation: false,
+        latencyMs,
+        visualState: "SUCCESS",
+      };
+
+      this.publishTelemetry({
+        inputMode,
+        userInput: trimmedMessage,
+        detectedLanguage: langDetection.languageName,
+        languageCode: langDetection.languageCode,
+        languageName: langDetection.languageName,
+        confidence: 0.98,
+        conversationId: convId,
+        intent: "question",
+        saasIntent: "system_status",
+        elmoResponse: responseText,
+        timestamp: Date.now(),
+        latencyMs,
+        elmoRequest,
+      });
+
+      return elmoRes;
+    }
     const isFunnelAction =
       saasIntentAnalysis.requiresAction ||
       [
@@ -811,6 +1177,7 @@ export class ELMOIntelligenceService {
       isCodeSwitched: Boolean(langDetection.isMixed),
       intent: saasIntentAnalysis.intent,
       executionCategory: saasIntentAnalysis.executionCategory || "direct_response",
+      guardrailCategory: saasIntentAnalysis.guardrailCategory || "information",
       context: { turnMode: "STREAMING" },
       businessContext: {},
       entities: saasIntentAnalysis.entities,
@@ -818,6 +1185,7 @@ export class ELMOIntelligenceService {
       timeConstraint: saasIntentAnalysis.timeConstraint,
       goalLikeRequest: Boolean(saasIntentAnalysis.goalData?.isGoal),
       goalData: saasIntentAnalysis.goalData,
+      userGoal: saasIntentAnalysis.userGoal,
       requiresAction: saasIntentAnalysis.requiresAction,
       requiresPlanning: Boolean(saasIntentAnalysis.requiresPlanning),
       requiresApproval: isDestructive,
@@ -836,6 +1204,7 @@ export class ELMOIntelligenceService {
         intent: langDetection.intent,
         saasIntent: saasIntentAnalysis.intent,
         executionCategory: saasIntentAnalysis.executionCategory,
+        guardrailCategory: saasIntentAnalysis.guardrailCategory,
         isComplexTask: saasIntentAnalysis.isComplexTask,
         requiresAction: saasIntentAnalysis.requiresAction,
         requiresPlanning: saasIntentAnalysis.requiresPlanning,
@@ -863,6 +1232,7 @@ export class ELMOIntelligenceService {
         intent: langDetection.intent,
         saas_intent: saasIntentAnalysis.intent,
         execution_category: saasIntentAnalysis.executionCategory,
+        guardrail_category: saasIntentAnalysis.guardrailCategory,
         is_complex_task: saasIntentAnalysis.isComplexTask,
         requires_action: saasIntentAnalysis.requiresAction,
         requires_planning: saasIntentAnalysis.requiresPlanning,
@@ -882,6 +1252,7 @@ export class ELMOIntelligenceService {
       currentEntities: saasIntentAnalysis.entities,
       messageQuery: trimmedMessage,
     });
+    elmoRequest.userContext = chatContext.userContext;
 
     // Background semantic memory extraction for Company Brain
     try {
@@ -894,6 +1265,84 @@ export class ELMOIntelligenceService {
       );
     } catch {
       // Non-blocking background extraction
+    }
+
+    // Section 13 & 14: Permission Enforcement in Streaming
+    const userRole = chatContext.userContext.role;
+    const permissions = chatContext.userContext.permissions;
+    if (saasIntentAnalysis.requiresAction && !permissions.canDirectELMO) {
+      const permissionMsg = `You currently have '${userRole}' permissions in ${chatContext.organization.name}. Your role permits viewing analytics, reports, and conversational inquiries, but executing actions or modifying assets requires 'member', 'admin', or 'owner' privileges.`;
+
+      yield {
+        event: "token",
+        data: { text: permissionMsg },
+      };
+
+      await this.chatService.createMessage(
+        params.userId,
+        params.organizationId,
+        {
+          conversationId: convId,
+          role: "assistant",
+          content: permissionMsg,
+          metadata: {
+            input_mode: inputMode,
+            role: userRole,
+            permission_denied: true,
+            status: "complete",
+          },
+        }
+      );
+
+      yield {
+        event: "done",
+        data: { status: "complete", permissionDenied: true },
+      };
+      return;
+    }
+
+    // Section 7: Ambiguity Handling in Streaming (Strict Priority Hierarchy)
+    if (saasIntentAnalysis.userGoal?.ambiguityDetected) {
+      const ambiguityResult = AmbiguityDetectorService.getInstance().resolveContextHierarchy({
+        message: trimmedMessage,
+        entities: saasIntentAnalysis.entities,
+        companyBrainContext: {
+          industry: (chatContext.businessContext as any)?.activeIndustry,
+          targetAudience: (chatContext.businessContext as any)?.targetAudience,
+          memories: chatContext.memories?.map((m) => ({ content: m })),
+        },
+        conversationContinuity: chatContext.activeContinuity as any,
+      });
+
+      if (ambiguityResult.isAmbiguous && ambiguityResult.clarificationQuestion) {
+        const clarificationText = ambiguityResult.clarificationQuestion;
+        yield {
+          event: "token",
+          data: { text: clarificationText },
+        };
+
+        await this.chatService.createMessage(
+          params.userId,
+          params.organizationId,
+          {
+            conversationId: convId,
+            role: "assistant",
+            content: clarificationText,
+            metadata: {
+              input_mode: inputMode,
+              is_clarification: true,
+              ambiguity_detected: true,
+              status: "complete",
+            },
+          }
+        );
+
+        yield {
+          event: "done",
+          data: { status: "complete", isAmbiguous: true },
+        };
+        return;
+      }
     }
 
     const funnelAgent = ElmoFunnelAgentService.getInstance();
@@ -1325,4 +1774,80 @@ export class ELMOIntelligenceService {
   public clearUsageHistory(): void {
     this.usageLog = [];
   }
+
+  private formatMarkdownBriefing(briefing: ExecutiveBriefing, orgName: string): string {
+    const lines: string[] = [
+      `# 🌅 Executive Morning Briefing: ${orgName}`,
+      `**Date:** ${briefing.briefingDate} | **Status:** Optimal | **Period:** Previous 24 Hours`,
+      "",
+      "---",
+      "",
+      "### 📊 BUSINESS SNAPSHOT",
+      `- **New Inbound Leads:** ${briefing.businessSnapshot.newLeadsCount}${briefing.businessSnapshot.leadVolumeChange.percentChange !== null ? ` (${briefing.businessSnapshot.leadVolumeChange.percentChange > 0 ? "+" : ""}${briefing.businessSnapshot.leadVolumeChange.percentChange}% vs prior period)` : ""}`,
+      `- **New Contacts Captured:** ${briefing.businessSnapshot.newContactsCount}`,
+      `- **Funnel Conversion Rate:** ${briefing.businessSnapshot.conversionChange.currentRate}% (${briefing.businessSnapshot.conversionChange.trend === "up" ? "↑ Improving" : briefing.businessSnapshot.conversionChange.trend === "down" ? "↓ Declining" : "→ Steady"})`,
+      `- **Active Acquisition Funnels:** ${briefing.funnelHealth.activeFunnels.length}`,
+    ];
+
+    if (briefing.businessSnapshot.leadSources.length > 0) {
+      const top = briefing.businessSnapshot.leadSources.map((s) => `${s.source}: ${s.count} (${s.percentage}%)`).join(" | ");
+      lines.push(`- **Lead Sources:** ${top}`);
+    }
+
+    lines.push("", "---", "", '### ⚠️ ATTENTION REQUIRED ("Why It Matters")');
+    if (
+      briefing.priorityItems.length === 0 ||
+      briefing.priorityItems.every((p) => p.category === "INFORMATION" || p.category === "POSITIVE_RESULT")
+    ) {
+      lines.push("No immediate blocking anomalies or critical alerts detected across your operations.");
+    } else {
+      for (const item of briefing.priorityItems
+        .filter((p) => p.category === "ATTENTION_REQUIRED" || p.category === "WATCH")
+        .slice(0, 3)) {
+        lines.push(
+          `#### 🔹 ${item.whatHappened}`,
+          `- **Why It Matters:** ${item.whyItMatters}`,
+          `- **Recommended Next Action:** ${item.recommendedAction}`,
+          ""
+        );
+      }
+    }
+
+    lines.push("---", "", "### 🎯 TODAY'S FOCUS");
+    if (briefing.todayFocus.length === 0) {
+      lines.push("1. Review company roadmap and active sprint deliverables.");
+    } else {
+      briefing.todayFocus.forEach((focus, idx) => {
+        lines.push(`${idx + 1}. **${focus.title}** — *${focus.reason}*`);
+      });
+    }
+
+    lines.push(
+      "",
+      "---",
+      "",
+      "### 🤖 AI WORKFORCE & WORK STATUS",
+      `- **Pending Approvals:** ${briefing.workStatus.pendingApprovals.length} item(s) awaiting executive decision`,
+      `- **Overdue Tasks:** ${briefing.workStatus.overdueTasks.length} task(s)`,
+      `- **Active AI Executions:** ${briefing.workStatus.activeExecutions.length} running autonomously`,
+      `- **Autonomous Deliveries Completed:** ${briefing.workStatus.completedExecutions.length} deliverable(s)`
+    );
+
+    if (briefing.recommendations.length > 0) {
+      lines.push("", "---", "", "### 💡 ELMO RECOMMENDS");
+      for (const rec of briefing.recommendations.slice(0, 3)) {
+        lines.push(`- **${rec.title}:** ${rec.description} *(Expected impact: ${rec.impact})*`);
+      }
+    }
+
+    lines.push(
+      "",
+      "---",
+      "",
+      '*Reply with "Handle the funnel issue" or "Create the tasks" and ELMO will coordinate our specialist workforce to execute.*'
+    );
+
+    return lines.join("\n");
+  }
+
 }

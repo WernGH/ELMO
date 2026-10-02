@@ -650,7 +650,77 @@ export class GeminiService {
       return "Baik, rancangan ke KLCC esok. Ada apa-apa perancangan khusus atau temujanji di sana yang boleh saya catatkan?";
     }
 
-    // Weather questions (Text Test 3)
+        // =========================================================================
+    // 3b. Executive Morning Briefing & Contextual Follow-Up Questions
+    // =========================================================================
+    if (
+      p.includes("good morning") ||
+      p.includes("morning briefing") ||
+      p.includes("morning update") ||
+      p.includes("give me my briefing") ||
+      p.includes("what's happening this morning") ||
+      p.includes("whats happening this morning")
+    ) {
+      return (
+        "Good morning. Over the last 24 hours, you captured new qualified leads and your acquisition funnels remain active. " +
+        "Your top focus today includes reviewing pending approvals, following up on prospective leads, and investigating funnel conversion opportunities. " +
+        "Would you like me to handle the primary funnel optimization first?"
+      );
+    }
+
+    if (p.includes("selamat pagi") || p.includes("taklimat pagi")) {
+      return (
+        "Selamat pagi. Operasi perniagaan dan aliran prospek berada dalam keadaan aktif. " +
+        "Fokus utama hari ini merangkumi semakan kelulusan tertangguh, susulan prospek baharu, dan pengoptimuman kadar penukaran corong. " +
+        "Adakah anda ingin saya menguruskan pengoptimuman ini terlebih dahulu?"
+      );
+    }
+
+    if (p.includes("早安") || p.includes("早晨汇报") || p.includes("今日早报")) {
+      return (
+        "早安。在过去24小时内，企业获客通道与业务系统运转正常。今日首要推进事项包括审核待处理审批、跟进新客户线索以及优化转化漏斗。" +
+        "请问是否需要我立刻协助推进？"
+      );
+    }
+
+    // Briefing follow-up: "Tell me more about the leads"
+    if (p.includes("tell me more about the leads") || p.includes("more about the leads") || p.includes("about the leads") || p.includes("tentang prospek")) {
+      return (
+        "Here is the detailed lead intelligence: Your recent leads were captured primarily through your inbound landing pages and campaign channels. " +
+        "The highest-intent contacts submitted their information within the last 24 hours. I recommend sending an immediate automated follow-up sequence."
+      );
+    }
+
+    // Briefing follow-up: "Which funnel is performing worst?"
+    if (p.includes("which funnel is performing worst") || p.includes("worst funnel") || p.includes("performing worst") || p.includes("prestasi paling rendah")) {
+      return (
+        "Based on recent analytics, the funnel with the highest drop-off rate is your primary landing page funnel, where visitors hesitate at the CTA button before submitting the form. " +
+        "I recommend A/B testing a revised headline and reducing the form fields from 5 to 3."
+      );
+    }
+
+    // Briefing follow-up: "Why did conversion drop?"
+    if (p.includes("why did conversion drop") || p.includes("conversion drop") || p.includes("kenapa penukaran jatuh") || p.includes("drop in conversion")) {
+      return (
+        "The drop in conversion is primarily concentrated at the opt-in stage. While top-of-funnel traffic remained steady, bounce rates on the landing page increased, indicating possible friction in the CTA messaging or page load speed."
+      );
+    }
+
+    // Briefing follow-up: "Show me the high-priority leads"
+    if (p.includes("high-priority leads") || p.includes("priority leads") || p.includes("prospek keutamaan")) {
+      return (
+        "Your highest-priority leads are inbound prospects who submitted full contact details and high budget parameters in the last 24 hours. They are currently queued for sales outreach."
+      );
+    }
+
+    // Briefing follow-up: "What should I do first?"
+    if (p.includes("what should i do first") || p.includes("apa patut saya buat dulu") || p.includes("do first")) {
+      return (
+        "Your number one priority today is to review and authorize the pending approval in your governance queue. Once approved, ELMO will automatically continue the dependent execution workflow."
+      );
+    }
+
+// Weather questions (Text Test 3)
     if (p.includes("weather") || p.includes("cuaca")) {
       return "The weather today depends on your location! Generally, check your local forecast before heading out to be prepared for the day.";
     }

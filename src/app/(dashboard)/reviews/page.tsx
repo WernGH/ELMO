@@ -207,7 +207,7 @@ export default function ReviewsPage() {
                   {req.private_feedback && (
                     <div className="mt-2 p-2.5 rounded bg-rose-950/30 border border-rose-500/30 text-xs text-rose-200">
                       <span className="font-bold">Private Customer Feedback: </span>
-                      "{req.private_feedback}"
+                      &ldquo;{req.private_feedback}&rdquo;
                     </div>
                   )}
                 </div>

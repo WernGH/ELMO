@@ -33,8 +33,8 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
     name: "Employees",
     href: "/employees",
     iconName: "Users",
-    badge: "Soon",
-    isFuture: true,
+    badge: "Active",
+    isFuture: false,
   },
   {
     name: "Tasks",

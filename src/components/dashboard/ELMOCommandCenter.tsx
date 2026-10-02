@@ -14,6 +14,7 @@ export interface ELMOCommandCenterProps {
   onEnterSpeakMode: () => void;
   onStartConversation?: () => void;
   onViewActivity?: () => void;
+  onOpenBriefing?: () => void;
   className?: string;
 }
 
@@ -24,6 +25,7 @@ export function ELMOCommandCenter({
   onEnterSpeakMode,
   onStartConversation,
   onViewActivity,
+  onOpenBriefing,
   className,
 }: ELMOCommandCenterProps) {
   // Normalize state to VoiceState
@@ -100,6 +102,17 @@ export function ELMOCommandCenter({
           <span>TALK TO ELMO</span>
           <ArrowRight className="w-4 h-4 text-black group-hover:translate-x-0.5 transition-transform" />
         </button>
+
+        {onOpenBriefing && (
+          <button
+            onClick={onOpenBriefing}
+            className="w-full sm:w-auto px-4 py-3 rounded-2xl bg-[#0B1A33] border border-cyan-500/50 hover:border-cyan-400 text-cyan-300 font-mono font-bold text-xs uppercase tracking-wider hover:bg-[#0F2447] transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(0,210,255,0.2)]"
+            id="morning-briefing-btn"
+          >
+            <Sparkles className="w-4 h-4 text-cyan-300" />
+            <span>MORNING BRIEFING</span>
+          </button>
+        )}
 
         <button
           onClick={onStartConversation || onEnterSpeakMode}

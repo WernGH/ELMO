@@ -12,6 +12,7 @@ import { ActivityService } from "./activity.service";
 
 export interface RequestApprovalParams {
   organizationId: string;
+  userId?: string;
   executionId?: string;
   stepId?: string;
   action: string;
@@ -78,6 +79,10 @@ export class ApprovalService {
   ): Promise<ApprovalRow | null> {
     const list = await this.getApprovals(userId, organizationId);
     return list.find((a) => a.id === approvalId) || null;
+  }
+
+  public async createPendingApproval(params: RequestApprovalParams): Promise<ApprovalRow> {
+    return this.requestApproval(params);
   }
 
   public async requestApproval(params: RequestApprovalParams): Promise<ApprovalRow> {

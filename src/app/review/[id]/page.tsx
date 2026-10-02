@@ -157,7 +157,7 @@ export default function PublicReviewPage() {
             {selectedRating <= 3 ? (
               <div className="space-y-2 bg-[#0C172C] p-4 rounded-xl border border-rose-500/30">
                 <p className="text-xs font-bold text-rose-300">
-                  We're so sorry to hear your experience wasn't 5-star.
+                  We&apos;re so sorry to hear your experience wasn&apos;t 5-star.
                 </p>
                 <p className="text-xs text-zinc-400">
                   Please tell our management team what happened so we can resolve this for you immediately:

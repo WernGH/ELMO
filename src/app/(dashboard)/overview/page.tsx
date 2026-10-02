@@ -30,6 +30,7 @@ import {
   Zap,
   Pause,
   Play,
+  ArrowRight,
 } from "lucide-react";
 import { AuthService } from "@/services/auth.service";
 import { OrganizationService } from "@/services/organization.service";
@@ -51,6 +52,9 @@ import { VoiceDebugPanel } from "@/components/voice/VoiceDebugPanel";
 import { VoiceController } from "@/services/voice/voice-controller";
 import { AudioManager } from "@/services/voice/audio-manager";
 import { ELMOIntelligenceService } from "@/services/elmo-intelligence.service";
+import { ExecutiveBriefingService } from "@/services/executive-briefing.service";
+import { ExecutiveBriefing } from "@/types/briefing.types";
+import { ExecutiveMorningBriefing } from "@/components/dashboard/ExecutiveMorningBriefing";
 import { MicPermissionState, VoiceError, VoiceState } from "@/services/voice/voice.types";
 import { cn } from "@/lib/utils";
 
@@ -156,8 +160,11 @@ export default function OverviewPage() {
   const [messages, setMessages] = useState<ConversationMessage[]>(INITIAL_MESSAGES);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<AIEmployee | null>(null);
-  const [activeTab, setActiveTab] = useState<"command" | "security">("command");
+  const [activeTab, setActiveTab] = useState<"command" | "briefing" | "security">("command");
   const [isFullScreenSpeakOpen, setIsFullScreenSpeakOpen] = useState(false);
+  const [briefing, setBriefing] = useState<ExecutiveBriefing | null>(null);
+  const [isBriefingLoading, setIsBriefingLoading] = useState(false);
+  const [isBriefingDismissed, setIsBriefingDismissed] = useState(false);
 
   const controllerRef = useRef<VoiceController | null>(null);
   const audioManagerRef = useRef<AudioManager | null>(null);
@@ -166,6 +173,26 @@ export default function OverviewPage() {
   const orgService = OrganizationService.getInstance();
   const chatService = ChatService.getInstance();
   const geminiService = GeminiService.getInstance();
+
+  const fetchBriefing = async (force: boolean = false) => {
+    setIsBriefingLoading(true);
+    try {
+      const sess = await authService.getSession();
+      const orgId = sess?.activeOrganizationId || "11111111-1111-1111-1111-111111111111";
+      const userId = sess?.user?.id || "00000000-0000-0000-0000-000000000001";
+      const briefingService = ExecutiveBriefingService.getInstance();
+      const b = await briefingService.getBriefing({
+        userId,
+        organizationId: orgId,
+        forceRefresh: force,
+      });
+      setBriefing(b);
+    } catch (err) {
+      console.error("[Overview] Failed to load executive briefing:", err);
+    } finally {
+      setIsBriefingLoading(false);
+    }
+  };
 
   useEffect(() => {
     async function init() {
@@ -179,6 +206,9 @@ export default function OverviewPage() {
         const { data: org } = await orgService.getOrganization(userId, orgId);
         setOrganization(org);
       }
+
+      // Preload Executive Morning Briefing
+      fetchBriefing(false);
 
       // Load recent messages from Supabase/ChatService if available
       let convId: string | null = null;
@@ -397,7 +427,7 @@ export default function OverviewPage() {
               ELMO NEURAL MATRIX // v3.2
             </DigitalBadge>
             <span className="text-xs font-mono text-zinc-400">
-              {organization?.name || "Autonomous Business Operations"}
+              {organization?.name || "Autonomous AI Operating System"}
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight mt-1 font-sans">
@@ -448,6 +478,18 @@ export default function OverviewPage() {
               Command Matrix
             </button>
             <button
+              onClick={() => setActiveTab("briefing")}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-mono transition-all flex items-center gap-1.5",
+                activeTab === "briefing"
+                  ? "bg-gradient-to-r from-blue-600 to-cyan-500 text-black font-bold shadow-[0_0_15px_rgba(0,210,255,0.4)]"
+                  : "text-zinc-400 hover:text-white"
+              )}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Morning Briefing</span>
+            </button>
+            <button
               onClick={() => setActiveTab("security")}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-mono transition-all",
@@ -464,6 +506,43 @@ export default function OverviewPage() {
 
       {activeTab === "command" ? (
         <>
+          {/* Executive Morning Briefing Notification Banner */}
+          {briefing && !isBriefingDismissed && (
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#07132B] via-[#050D1D] to-[#081224] border border-cyan-500/40 p-4 shadow-[0_0_30px_rgba(0,210,255,0.15)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/40 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-cyan-400 animate-pulse" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-300">
+                      TODAY&apos;S EXECUTIVE BRIEFING READY
+                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                  </div>
+                  <p className="text-xs text-white font-medium mt-0.5">
+                    {briefing.priorityItems.length} priority items identified • {briefing.businessSnapshot.newLeadsCount} new leads (24h)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-end sm:self-center">
+                <button
+                  onClick={() => setActiveTab("briefing")}
+                  className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 text-black font-mono font-bold text-xs flex items-center gap-1.5 hover:brightness-110 shadow-[0_0_15px_rgba(0,210,255,0.4)]"
+                >
+                  <span>View Briefing</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsBriefingDismissed(true)}
+                  className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/60 transition-colors"
+                  title="Dismiss banner"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
           {/* ========================================================= */}
           {/* MAIN COMMAND SPLIT: CENTER COMMAND AREA & LIVE CONV PANEL */}
           {/* ========================================================= */}
@@ -759,6 +838,17 @@ export default function OverviewPage() {
             </div>
           </div>
         </>
+      ) : activeTab === "briefing" ? (
+        <ExecutiveMorningBriefing
+          briefing={briefing}
+          userName={session?.user?.displayName || organization?.name || "Commander"}
+          organizationName={organization?.name}
+          userId={session?.user?.id || "00000000-0000-0000-0000-000000000001"}
+          organizationId={session?.activeOrganizationId || "11111111-1111-1111-1111-111111111111"}
+          isLoading={isBriefingLoading}
+          onRefresh={() => fetchBriefing(true)}
+          onAskELMO={handleSendMessage}
+        />
       ) : (
         /* ========================================================= */
         /* RLS SECURITY TELEMETRY AUDIT TAB                          */

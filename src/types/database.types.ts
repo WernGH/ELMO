@@ -152,12 +152,27 @@ export type MemoryCategory =
   | "experience"
   | "learning"
   | "routine"
-  | "relationship"
+  | "rule"
+  | "rules"
+  | "lesson"
+  | "lessons"
+  | "workflow"
+  | "workflows"
   | (string & {});
 
 export type MemoryStatus = "active" | "superseded" | "archived" | "expired" | "deleted";
 export type MemoryConfidenceLevel = "low" | "medium" | "high" | "confirmed";
-export type MemorySource = "conversation" | "explicit_command" | "tool_execution" | "user_input";
+export type MemorySource =
+  | "conversation"
+  | "explicit_command"
+  | "tool_execution"
+  | "user_input"
+  | "fact"
+  | "user_provided"
+  | "system_derived"
+  | "ai_inferred"
+  | "unverified"
+  | (string & {});
 
 export interface Database {
   public: {

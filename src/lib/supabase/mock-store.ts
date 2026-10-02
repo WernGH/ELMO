@@ -193,6 +193,103 @@ export interface SopRow {
 }
 export type SopInsert = Partial<SopRow> & { organization_id: string; title: string; content: string };
 
+export interface ExecutiveBriefingRow {
+  id: string;
+  organization_id: string;
+  user_id?: string | null;
+  briefing_date: string;
+  generated_at: string;
+  period_start: string;
+  period_end: string;
+  snapshot: Record<string, unknown>;
+  funnel_health: Record<string, unknown>;
+  work_status: Record<string, unknown>;
+  workforce_summary: Record<string, unknown>;
+  priority_items: Record<string, unknown>[];
+  today_focus: Record<string, unknown>[];
+  recommendations: Record<string, unknown>[];
+  spoken_briefing: string;
+  language: string;
+  status: "active" | "archived";
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+export type ExecutiveBriefingInsert = Partial<ExecutiveBriefingRow> & {
+  organization_id: string;
+  briefing_date: string;
+};
+
+// ============================================================================
+// Phase 4 Workforce Types & Rows
+// ============================================================================
+
+export interface WorkerRow {
+  id: string;
+  organization_id?: string | null;
+  name: string;
+  description: string;
+  role: string;
+  capabilities: string[];
+  skills: string[];
+  allowed_tools: string[];
+  permissions: string[];
+  system_instructions: string;
+  status: "AVAILABLE" | "BUSY" | "WAITING" | "PAUSED" | "DISABLED" | "ERROR" | "MAINTENANCE";
+  availability: number;
+  workload: number;
+  capacity: number;
+  version: string;
+  priority: number;
+  worker_type: "foundational" | "specialist" | "custom";
+  source: "builtin" | "company" | "github";
+  enabled: boolean;
+  performance_metrics: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+export type WorkerInsert = Partial<WorkerRow> & { id: string; name: string; role: string };
+
+export interface WorkerAssignmentRow {
+  id: string;
+  organization_id: string;
+  worker_id: string;
+  task_id: string;
+  execution_id: string;
+  status: "ACTIVE" | "COMPLETED" | "FAILED" | "REASSIGNED";
+  assigned_at: string;
+  completed_at?: string | null;
+}
+
+export interface WorkerHandoffRow {
+  id: string;
+  organization_id: string;
+  execution_id: string;
+  task_id: string;
+  from_worker_id: string;
+  to_worker_id: string;
+  reason: string;
+  objective: string;
+  completed_work: string;
+  required_next_action: string;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  verification_status: string;
+  created_at: string;
+}
+
+export interface WorkerActivityRow {
+  id: string;
+  organization_id: string;
+  execution_id: string;
+  task_id?: string | null;
+  worker_id: string;
+  event_type: string;
+  status: string;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export class MockDataStore {
   private static instance: MockDataStore;
 
@@ -224,6 +321,9 @@ export class MockDataStore {
   public automationActions: Map<string, AutomationActionRow> = new Map();
   public analyticsEvents: Map<string, AnalyticsEventRow> = new Map();
   public memories: Map<string, CompanyMemoryRow> = new Map();
+  public get companyMemories(): Map<string, CompanyMemoryRow> {
+    return this.memories;
+  }
   public goals: Map<string, GoalRow> = new Map();
   public tasks: Map<string, TaskRow> = new Map();
   public activities: Map<string, ActivityRow> = new Map();
@@ -234,6 +334,13 @@ export class MockDataStore {
   public bookings: Map<string, BookingRow> = new Map();
   public reviewRequests: Map<string, ReviewRequestRow> = new Map();
   public sops: Map<string, SopRow> = new Map();
+  public executiveBriefings: Map<string, ExecutiveBriefingRow> = new Map();
+
+  // Phase 4 Governed Workforce Maps
+  public aiWorkers: Map<string, WorkerRow> = new Map();
+  public workerAssignments: Map<string, WorkerAssignmentRow> = new Map();
+  public workerHandoffs: Map<string, WorkerHandoffRow> = new Map();
+  public workerActivities: Map<string, WorkerActivityRow> = new Map();
 
   private constructor() {
     this.seedDefaultData();
@@ -282,6 +389,12 @@ export class MockDataStore {
     this.bookings.clear();
     this.reviewRequests.clear();
     this.sops.clear();
+    this.executiveBriefings.clear();
+
+    this.aiWorkers.clear();
+    this.workerAssignments.clear();
+    this.workerHandoffs.clear();
+    this.workerActivities.clear();
 
     this.seedDefaultData();
   }
@@ -368,6 +481,10 @@ export class MockDataStore {
       }
     }
     return false;
+  }
+
+  public getOrgMembers(orgId: string): OrganizationMember[] {
+    return Array.from(this.organizationMembers.values()).filter((m) => m.organization_id === orgId);
   }
 
   public getOrgRole(userId: string, orgId: string): OrganizationRole | null {
@@ -1759,6 +1876,134 @@ export class MockDataStore {
     const existing = this.sops.get(sopId);
     if (!existing || existing.organization_id !== organizationId) return false;
     return this.sops.delete(sopId);
+  }
+
+  // ==========================================
+  // Executive Briefings RLS Methods
+  // ==========================================
+
+  public queryExecutiveBriefingsWithRLS(
+    userId: string,
+    organizationId: string
+  ): ExecutiveBriefingRow[] {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return [];
+    }
+    return Array.from(this.executiveBriefings.values())
+      .filter((b) => b.organization_id === organizationId)
+      .sort((a, b) => new Date(b.briefing_date).getTime() - new Date(a.briefing_date).getTime());
+  }
+
+  public getExecutiveBriefingByDateWithRLS(
+    userId: string,
+    organizationId: string,
+    briefingDate: string
+  ): ExecutiveBriefingRow | null {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return null;
+    }
+    for (const b of this.executiveBriefings.values()) {
+      if (b.organization_id === organizationId && b.briefing_date === briefingDate && b.status === "active") {
+        return b;
+      }
+    }
+    return null;
+  }
+
+  public saveExecutiveBriefingWithRLS(
+    userId: string,
+    organizationId: string,
+    data: ExecutiveBriefingInsert
+  ): ExecutiveBriefingRow {
+    if (!this.isOrgMember(userId, organizationId)) {
+      throw new Error("Unauthorized: User is not an organization member.");
+    }
+    // Check if existing for same org and date
+    let existingId: string | null = null;
+    for (const [id, b] of this.executiveBriefings.entries()) {
+      if (b.organization_id === organizationId && b.briefing_date === data.briefing_date) {
+        existingId = id;
+        break;
+      }
+    }
+
+    const id = existingId || data.id || `brf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const row: ExecutiveBriefingRow = {
+      id,
+      organization_id: organizationId,
+      user_id: data.user_id ?? userId,
+      briefing_date: data.briefing_date,
+      generated_at: data.generated_at ?? now,
+      period_start: data.period_start ?? now,
+      period_end: data.period_end ?? now,
+      snapshot: data.snapshot ?? {},
+      funnel_health: data.funnel_health ?? {},
+      work_status: data.work_status ?? {},
+      workforce_summary: data.workforce_summary ?? {},
+      priority_items: data.priority_items ?? [],
+      today_focus: data.today_focus ?? [],
+      recommendations: data.recommendations ?? [],
+      spoken_briefing: data.spoken_briefing ?? "",
+      language: data.language ?? "en",
+      status: data.status ?? "active",
+      metadata: data.metadata ?? {},
+      created_at: data.created_at ?? now,
+      updated_at: now,
+    };
+    this.executiveBriefings.set(id, row);
+    return row;
+  }
+
+  public deleteExecutiveBriefingWithRLS(
+    userId: string,
+    organizationId: string,
+    briefingId: string
+  ): boolean {
+    if (!this.isOrgMember(userId, organizationId)) return false;
+    const existing = this.executiveBriefings.get(briefingId);
+    if (!existing || existing.organization_id !== organizationId) return false;
+    return this.executiveBriefings.delete(briefingId);
+  }
+
+  // ==========================================
+  // Phase 4 Governed Workforce RLS Methods
+  // ==========================================
+
+  public queryWorkersWithRLS(userId: string, organizationId: string): WorkerRow[] {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return [];
+    }
+    return Array.from(this.aiWorkers.values())
+      .filter((w) => !w.organization_id || w.organization_id === organizationId || w.source === "builtin")
+      .sort((a, b) => b.priority - a.priority);
+  }
+
+  public queryWorkerAssignmentsWithRLS(userId: string, organizationId: string): WorkerAssignmentRow[] {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return [];
+    }
+    return Array.from(this.workerAssignments.values())
+      .filter((a) => a.organization_id === organizationId)
+      .sort((a, b) => new Date(b.assigned_at).getTime() - new Date(a.assigned_at).getTime());
+  }
+
+  public queryWorkerHandoffsWithRLS(userId: string, organizationId: string): WorkerHandoffRow[] {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return [];
+    }
+    return Array.from(this.workerHandoffs.values())
+      .filter((h) => h.organization_id === organizationId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public queryWorkerActivitiesWithRLS(userId: string, organizationId: string): WorkerActivityRow[] {
+    if (!this.isOrgMember(userId, organizationId)) {
+      return [];
+    }
+    return Array.from(this.workerActivities.values())
+      .filter((act) => act.organization_id === organizationId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 }
 

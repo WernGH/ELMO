@@ -95,6 +95,8 @@ export interface ChatContext {
   systemInstruction: string;
   memories?: string[];
   activeContinuity?: Record<string, unknown>;
+  userContext?: unknown;
+  businessContext?: unknown;
 }
 
 export interface GeminiModelConfig {
