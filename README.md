@@ -3,7 +3,7 @@
 > **ELMO (AI CEO & Autonomous Workforce Coordinator)**  
 > Next-generation AI operating system built for autonomous enterprise workflows, real-time multilingual voice command, multi-tenant funnel orchestration, and multi-agent coordination.
 
-[![Vitest Tests](https://img.shields.io/badge/Tests-353%20Passed-00D2FF?style=for-the-badge&logo=vitest&logoColor=white)](file:///tests)
+[![Vitest Tests](https://img.shields.io/badge/Tests-756%20Passed-00D2FF?style=for-the-badge&logo=vitest&logoColor=white)](file:///tests)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![TailwindCSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
@@ -46,7 +46,7 @@
 - **Icons**: Lucide React
 - **Backend / DB**: Supabase (PostgreSQL with RLS)
 - **AI / LLM**: Google Gemini 1.5 Flash & Pro via `GeminiService`
-- **Testing**: Vitest 2.1 (40 test suites, 353 passing tests)
+- **Testing**: Vitest 2.1 (73 test suites, 756 passing tests)
 
 ---
 
@@ -96,8 +96,8 @@ npm run typecheck
 ```
 
 **Test Health:**
-- ✅ 40 Test Files Passed
-- ✅ 353 Tests Passed
+- ✅ 73 Test Files Passed
+- ✅ 756 Tests Passed
 - ✅ 0 Failures
 
 ---
@@ -116,7 +116,8 @@ elmo/
 │   └── types/                    # TypeScript interfaces & Supabase DB types
 ├── supabase/
 │   └── migrations/               # PostgreSQL schema & RLS policies
-└── tests/                        # 40 comprehensive Vitest test suites
+└── tests/                        # 73 comprehensive Vitest test suites
+```
 ```
 
 ---
